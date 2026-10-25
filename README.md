@@ -284,3 +284,7 @@ gradle init         # 同上（前提：项目已应用 jrun 插件）
 
 发布到 Plugin Portal：配置 `gradle.publish.key` / `gradle.publish.secret` 后
 执行 `./gradlew publishPlugins`。完整检查清单见 [`docs/PUBLISHING.md`](docs/PUBLISHING.md)。
+
+## 12. 许可
+
+[MIT](LICENSE) © 2026 sofn

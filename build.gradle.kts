@@ -70,19 +70,32 @@ gradlePlugin {
     // 真实仓库地址（发布到 Plugin Portal 时这两项会被校验）
     website = "https://git.lesofn.com/sofn/jrun-gradle-plugin"
     vcsUrl = "https://git.lesofn.com/sofn/jrun-gradle-plugin.git"
-
     plugins {
         create("jrun") {
             id = "com.archforge.jrun"
             implementationClass = "com.archforge.jrun.JrunPlugin"
             displayName = "jrun"
-            description = "Flat src/test layout, generated ./jrun launchers and package.json-like scripts"
+            description = "Flat main/test layout, generated ./jrun launchers and package.json-like scripts"
             tags.set(
                 listOf(
                     "java", "kotlin", "groovy", "runner", "scripts",
                     "developer-experience", "spring-boot", "cli"
                 )
             )
+        }
+    }
+}
+
+// 协议信息会进入 POM，Plugin Portal 页面也会展示
+publishing {
+    publications.withType<MavenPublication>().configureEach {
+        pom {
+            licenses {
+                license {
+                    name.set("MIT License")
+                    url.set("https://opensource.org/licenses/MIT")
+                }
+            }
         }
     }
 }

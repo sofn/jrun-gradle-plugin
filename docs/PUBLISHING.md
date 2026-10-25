@@ -98,7 +98,7 @@
 - [ ] `version` 是正式版（不要 `SNAPSHOT`）
 - [ ] `group` 与插件 id 前缀一致（`com.archforge.jrun` ↔ id `com.archforge.jrun`）
 - [ ] `tags` 不超过 20 个、都是小写短词（Portal 有格式要求）
-- [ ] `LICENSE` 存在（Apache-2.0）
+- [x] `LICENSE` 存在（MIT）
 - [ ] `README.md` 含「安装 / 快速开始 / 已知限制」
 
 ### 2. 构建与测试
