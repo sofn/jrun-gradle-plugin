@@ -449,5 +449,5 @@ cd <业务项目>
 发布前的完整检查清单、仍建议补充的测试、版本策略见
 [`docs/PUBLISHING.md`](docs/PUBLISHING.md)。
 
-> ⚠️ `build.gradle.kts` 里的 `website` / `vcsUrl` 目前是**占位地址**，
-> 首次发布前必须替换成真实地址。
+> 仓库地址：<https://git.lesofn.com/sofn/jrun-gradle-plugin>
+> （`build.gradle.kts` 里的 `website` / `vcsUrl` 已指向这里）

@@ -93,7 +93,8 @@
 
 ### 1. 元数据
 
-- [ ] `build.gradle.kts` 里 `gradlePlugin.website` / `vcsUrl` 换成**真实**地址（当前是占位 `github.com/archforge/...`）
+- [x] `build.gradle.kts` 里 `gradlePlugin.website` / `vcsUrl` 已指向真实仓库
+      （`https://git.lesofn.com/sofn/jrun-gradle-plugin`）
 - [ ] `version` 是正式版（不要 `SNAPSHOT`）
 - [ ] `group` 与插件 id 前缀一致（`com.archforge.jrun` ↔ id `com.archforge.jrun`）
 - [ ] `tags` 不超过 20 个、都是小写短词（Portal 有格式要求）
