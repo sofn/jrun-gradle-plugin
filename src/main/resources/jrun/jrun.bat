@@ -27,8 +27,7 @@ cd /d "%SCRIPT_DIR%"
 set "OUT_DIR=build\jrun"
 rem argfiles are platform specific: Windows and WSL share build/, so keep them apart
 set "ARGS_DIR=%OUT_DIR%\win"
-set "GRADLEW=gradlew.bat"
-if not exist "%GRADLEW%" set "GRADLEW=gradle"
+call :find_gradlew "%CD%"
 set "ARG_SOURCE=%CD%\%ARGS_DIR%\source.args"
 set "ARG_CLASS=%CD%\%ARGS_DIR%\class.args"
 set "FORCE_REBUILD=0"
@@ -64,8 +63,10 @@ if /i "!FIRST!"=="-r" (
 )
 if /i "!FIRST!"=="--help" goto show_help
 if /i "!FIRST!"=="-h" goto show_help
-if /i "!FIRST!"=="--version" goto print_version
-if /i "!FIRST!"=="-V" goto print_version
+if not defined TARGET if /i "!FIRST!"=="--version" goto print_version
+if not defined TARGET if /i "!FIRST!"=="-V" goto print_version
+if not defined TARGET if /i "!FIRST!"=="-m" goto module_dispatch
+if not defined TARGET if /i "!FIRST!"=="--module" goto module_dispatch
 if not defined TARGET (
     set "TARGET=!FIRST!"
 ) else (
@@ -90,18 +91,18 @@ rem  Built-in Gradle shortcuts
 rem ---------------------------------------------------------------------------
 for %%T in (build test clean classes jar check) do (
     if /i "!TARGET!"=="%%T" (
-        call "%GRADLEW%" %%T !APP_ARGS!
+        call "!GRADLEW!" %%T !APP_ARGS!
         exit /b !ERRORLEVEL!
     )
 )
 rem NOTE: "init" must be handled BEFORE the generic Gradle task loop, because
 rem Gradle has its own built-in "init" task and we want jrunInit instead.
 if /i "!TARGET!"=="init" (
-    call "%GRADLEW%" jrunInit !APP_ARGS!
+    call "!GRADLEW!" jrunInit !APP_ARGS!
     exit /b !ERRORLEVEL!
 )
 if /i "!TARGET!"=="prepare" (
-    call "%GRADLEW%" jrunInit !APP_ARGS!
+    call "!GRADLEW!" jrunInit !APP_ARGS!
     exit /b !ERRORLEVEL!
 )
 
@@ -137,7 +138,7 @@ goto after_prepare
 
 :do_prepare
 echo Preparing runtime ^(Gradle jrunInit^)... 1>&2
-call "%GRADLEW%" --quiet --console=plain jrunInit
+call "!GRADLEW!" --quiet --console=plain jrunInit
 if errorlevel 1 exit /b 1
 if not exist "%ARGS_DIR%\source.args" (
     echo Missing %ARGS_DIR%\source.args - run: gradlew jrunInit 1>&2
@@ -201,7 +202,7 @@ set "FIXED_FILE=%CD%\%SCRIPTS_DIR%\!RS_NAME!.args"
 call :run_java_target
 goto rs_done
 :rs_gradle
-call "%GRADLEW%" !RS_TARGET! !FINAL_ARGS!
+call "!GRADLEW!" !RS_TARGET! !FINAL_ARGS!
 goto rs_done
 :rs_shell
 cmd /d /c "!RS_TARGET! !FINAL_ARGS!"
@@ -219,7 +220,7 @@ if /i "!EXT!"==".kt" goto rjt_jvm
 if /i "!EXT!"==".groovy" goto rjt_jvm
 if /i "!EXT!"==".scala" goto rjt_jvm
 rem Keep build/classes in sync with the sources (incremental, usually fast)
-call "%GRADLEW%" --quiet --console=plain classes
+call "!GRADLEW!" --quiet --console=plain classes
 if errorlevel 1 exit /b 1
 set "PROGRAM=!TARGET!"
 set "RUNTIME=!ARG_CLASS!"
@@ -241,7 +242,7 @@ if not exist "!TARGET!" (
     exit /b 1
 )
 call :derive_jvm_main "!TARGET!"
-call "%GRADLEW%" --quiet --console=plain classes
+call "!GRADLEW!" --quiet --console=plain classes
 if errorlevel 1 exit /b 1
 set "PROGRAM=!MAIN_CLASS!"
 set "RUNTIME=!ARG_CLASS!"
@@ -295,9 +296,9 @@ set "BUILD_FILE=build.gradle.kts"
 if not exist "!BUILD_FILE!" set "BUILD_FILE=build.gradle"
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 copy /y "!BUILD_FILE!" "%OUT_DIR%\!BUILD_FILE!.bak" >nul
-call "%GRADLEW%" --quiet --console=plain jrunAdd "--configuration=!ADD_CFG!" !ADD_DEPS!
+call "!GRADLEW!" --quiet --console=plain jrunAdd "--configuration=!ADD_CFG!" !ADD_DEPS!
 if errorlevel 1 goto add_restore
-call "%GRADLEW%" --quiet --console=plain jrunResolve "--configuration=!ADD_CFG!" jrunInit
+call "!GRADLEW!" --quiet --console=plain jrunResolve "--configuration=!ADD_CFG!" jrunInit
 if errorlevel 1 goto add_restore
 del "%OUT_DIR%\!BUILD_FILE!.bak" >nul 2>&1
 echo Added to !BUILD_FILE! ^(!ADD_CFG!^)
@@ -387,6 +388,38 @@ exit /b 0
 :print_version
 echo jrun %JRUN_VERSION%
 exit /b 0
+
+:module_dispatch
+rem jrun -m <module> <command>: module dir from the root's modules.properties,
+rem falling back to the convention a:b -> a\b
+set "MODULE="
+set "MODULE_ARGS="
+for /f "tokens=1,*" %%A in ("!REST!") do (
+    set "MODULE=%%A"
+    set "MODULE_ARGS=%%B"
+)
+if not defined MODULE (
+    echo Usage: jrun -m ^<module^> ^<command^> [args...] 1>&2
+    exit /b 1
+)
+set "MODULE_DIR="
+if exist "%OUT_DIR%\modules.properties" (
+    for /f "usebackq tokens=1,* delims==" %%A in ("%OUT_DIR%\modules.properties") do (
+        if "%%A"=="!MODULE!" if not defined MODULE_DIR set "MODULE_DIR=%%B"
+    )
+)
+if not defined MODULE_DIR (
+    set "MODULE_DIR=!MODULE!"
+    if "!MODULE_DIR:~0,1!"==":" set "MODULE_DIR=!MODULE_DIR:~1!"
+    set "MODULE_DIR=!MODULE_DIR::=\!"
+)
+set "MODULE_DIR=!MODULE_DIR:/=\!"
+if not exist "!MODULE_DIR!\jrun.bat" (
+    echo jrun: module '!MODULE!' has no launcher ^(!MODULE_DIR!\jrun.bat^) 1>&2
+    exit /b 1
+)
+call "!MODULE_DIR!\jrun.bat" !MODULE_ARGS!
+exit /b !ERRORLEVEL!
 
 :find_gradlew
 rem In multi-module builds gradlew.bat lives in the build root: search upwards
@@ -515,6 +548,7 @@ echo   jrun Hello.java                  single-file source mode
 echo   jrun com.example.demo.App         classpath mode ^(Spring Boot etc.^)
 echo   jrun ^<script-name^>                run a script from jrun { scripts }
 echo   jrun add [--test] ^<g:a:v^>...       add dependencies to build.gradle(.kts)
+echo   jrun -m ^<module^> ^<command^>         run a command in a sub-module
 echo   jrun build^|test^|clean^|classes     shortcut for the Gradle task
 echo   jrun init                         regenerate the argfile cache
 echo   jrun --rebuild ^<target^>           refresh the cache, then run

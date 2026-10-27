@@ -49,4 +49,21 @@ class JrunCliFunctionalTest extends AbstractJrunTest {
         String out = runner("jrunResolve", "--configuration=testImplementation").buildAndFail().getOutput();
         assertTrue(out.contains("com.example:lib:9.9"), "the failing coordinate should be reported:\n" + out);
     }
+
+    @Test
+    void multiModuleBuildsGetLaunchersAndAModuleMap() {
+        write("settings.gradle", "rootProject.name = 'multi'\ninclude 'app', 'tools:cli'\n");
+        buildScript("plugins { id 'com.archforge.jrun' }\n");
+        write("app/build.gradle", "plugins { id 'com.archforge.jrun' }\n");
+        write("tools/cli/build.gradle", "plugins { id 'com.archforge.jrun' }\n");
+
+        runner("jrunInit").build();
+
+        assertTrue(exists("jrun") && exists("app/jrun") && exists("tools/cli/jrun"),
+                "every project applying the plugin gets its own launcher");
+        assertEquals(":app=app\napp=app\n:tools:cli=tools/cli\ncli=tools/cli\n",
+                read("build/jrun/modules.properties"));
+        assertTrue(read("app/build/jrun/" + platformDir() + "/inputs.sha256").contains("  ../settings.gradle\n"),
+                "a module's cache must also depend on the root settings");
+    }
 }

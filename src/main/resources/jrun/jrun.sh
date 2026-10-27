@@ -24,6 +24,7 @@ jrun - run Java like uv / cargo / npm scripts
   ./jrun com.example.demo.App        classpath mode (Spring Boot etc.)
   ./jrun <script> [args...]          run a script declared in jrun { }
   ./jrun add [--test|--config <c>] <group:artifact[:version]>...
+  ./jrun -m <module> <command>       run a command in a sub-module
   ./jrun build|test|clean|classes    shortcut for the Gradle task
   ./jrun --rebuild <target>          refresh the runtime cache first
   ./jrun init                        (inside a project) refresh the runtime cache
@@ -95,8 +96,15 @@ find_java() {
   export JAVA_HOME
 }
 
+# 多模块时 gradlew 在构建根目录：从项目目录向上找
 find_gradlew() {
-  if [[ -f "$ROOT_DIR/gradlew" ]]; then printf '%s' "$ROOT_DIR/gradlew"; else printf 'gradle'; fi
+  local d="$ROOT_DIR"
+  while :; do
+    if [[ -f "$d/gradlew" ]]; then printf '%s' "$d/gradlew"; return 0; fi
+    if [[ "$d" == "$(dirname -- "$d")" ]]; then break; fi
+    d="$(dirname -- "$d")"
+  done
+  printf 'gradle'
 }
 
 # gradlew 在 git 里常丢可执行位，统一用 sh 执行
@@ -206,9 +214,31 @@ OUT_DIR="build/jrun"
 ARGS_DIR="$OUT_DIR/$PLATFORM"
 GRADLEW="$(find_gradlew)"
 
+# -m 的取值：先查根项目写下的 modules.properties，查不到时按约定把 a:b 当作目录 a/b
+module_dir() {
+  local m="$1" mapped=""
+  if [[ -f "$OUT_DIR/modules.properties" ]]; then
+    mapped="$(awk -F= -v k="$m" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$OUT_DIR/modules.properties")"
+  fi
+  if [[ -z "$mapped" ]]; then
+    mapped="${m#:}"
+    mapped="${mapped//://}"
+  fi
+  printf '%s' "$mapped"
+}
+
 case "${1:-}" in
   --version|-V) echo "jrun $JRUN_VERSION"; exit 0 ;;
   -h|--help) usage; exit 0 ;;
+  -m|--module)
+    if [[ $# -lt 2 ]]; then echo "用法: ./jrun -m <模块> <命令> [参数...]" >&2; exit 1; fi
+    MODULE_DIR="$(module_dir "$2")"
+    if [[ ! -f "$MODULE_DIR/jrun" ]]; then
+      echo "jrun: 模块 '$2' 没有启动器（$MODULE_DIR/jrun）；在该模块应用 jrun 插件后执行一次 gradle jrunInit" >&2
+      exit 1
+    fi
+    exec bash "$MODULE_DIR/jrun" "${@:3}"
+    ;;
 esac
 
 find_java

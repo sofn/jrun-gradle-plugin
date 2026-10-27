@@ -84,6 +84,17 @@ public class JrunPlugin implements Plugin<Project> {
                 throw new UncheckedIOException(e);
             }
         });
+
+        if (project == project.getRootProject()) {
+            // 根项目应用插件时写出模块映射，./jrun -m <模块> 据此找到子项目目录
+            project.getGradle().projectsEvaluated(gradle -> {
+                try {
+                    LauncherGenerator.writeModulesMap(project);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        }
     }
 
     /**

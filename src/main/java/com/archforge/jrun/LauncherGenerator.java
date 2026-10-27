@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -45,6 +46,23 @@ final class LauncherGenerator {
         // 清理旧版本升级后遗留的文件（jrun.ps1 启动器、jrun.json 清单都已移除）
         Files.deleteIfExists(root.resolve("jrun.ps1"));
         Files.deleteIfExists(root.resolve("jrun.json"));
+    }
+
+    /** build/jrun/modules.properties：项目路径和项目名 → 相对目录（只列出应用了 jrun 的子项目）。 */
+    static void writeModulesMap(Project root) throws IOException {
+        Path rootDir = root.getProjectDir().toPath();
+        StringBuilder map = new StringBuilder();
+        root.getSubprojects().stream()
+                .filter(p -> p.getPluginManager().hasPlugin("com.archforge.jrun"))
+                .sorted(Comparator.comparing(Project::getPath))
+                .forEach(p -> {
+                    String dir = rootDir.relativize(p.getProjectDir().toPath()).toString()
+                            .replace(File.separatorChar, '/');
+                    map.append(p.getPath()).append('=').append(dir).append('\n');
+                    map.append(p.getName()).append('=').append(dir).append('\n');
+                });
+        FileWrites.writeIfChanged(root.getLayout().getBuildDirectory().get().getAsFile().toPath()
+                .resolve(RuntimeMetadataWriter.OUTPUT_DIR).resolve("modules.properties"), map.toString());
     }
 
     /** 启动器模板 → 最终内容（换行统一为 LF，替换版本号）；.bat 的 CRLF 由写入方处理。 */

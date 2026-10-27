@@ -110,6 +110,20 @@ class JrunBatFunctionalTest extends AbstractJrunTest {
     }
 
     @Test
+    void dashMDelegatesToTheModuleLauncher() {
+        write("settings.gradle", "rootProject.name = 'multi'\ninclude 'app'\n");
+        buildScript("plugins { id 'com.archforge.jrun' }\n");
+        write("app/build.gradle", "plugins { id 'com.archforge.jrun' }\njrun { scripts.put('dev', 'Hello.java') }\n");
+        write("app/main/Hello.java",
+                "public class Hello { public static void main(String[] a) { System.out.println(\"APP_MODULE\"); } }\n");
+        runner("jrunInit").build();
+
+        ProcessResult r = bat(projectDir, Map.of(), "-m", "app", "dev");
+        assertEquals(0, r.exitCode(), r.output());
+        assertTrue(r.output().contains("APP_MODULE"), r.output());
+    }
+
+    @Test
     void theGlobalLauncherPrintsItsVersionAndScaffolds() throws IOException {
         Path bin = Files.createDirectories(projectDir.resolve("bin"));
         Files.writeString(bin.resolve("jrun.bat"),

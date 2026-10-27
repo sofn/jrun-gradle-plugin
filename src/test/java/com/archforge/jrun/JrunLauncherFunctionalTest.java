@@ -319,4 +319,24 @@ class JrunLauncherFunctionalTest extends AbstractJrunTest {
         assertEquals(0, r.exitCode(), r.output());
         assertTrue(r.output().contains("HELLO"), r.output());
     }
+
+    @Test
+    void theRootLauncherDelegatesToModulesAndModulesFindTheRootGradlew() {
+        write("settings.gradle", "rootProject.name = 'multi'\ninclude 'app'\n");
+        buildScript("plugins { id 'com.archforge.jrun' }\n");
+        write("app/build.gradle", "plugins { id 'com.archforge.jrun' }\njrun { scripts.put('dev', 'Hello') }\n");
+        write("app/main/Hello.java",
+                "public class Hello { public static void main(String[] a) { System.out.println(\"APP_MODULE\"); } }\n");
+        runner("jrunInit").build();
+        fakeGradlew("exit 0\n");
+
+        ProcessResult r = jrun("-m", "app", "dev");
+        assertEquals(0, r.exitCode(), r.output());
+        assertTrue(r.output().contains("APP_MODULE"), r.output());
+        assertEquals("", gradleCalls(), "a fresh module cache must not start Gradle");
+
+        write("app/build.gradle", read("app/build.gradle") + "// touched\n");
+        jrun("-m", "app", "dev");
+        assertTrue(gradleCalls().contains("jrunInit"), "the module launcher must use the root gradlew");
+    }
 }
