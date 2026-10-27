@@ -39,6 +39,11 @@ tasks.withType<JavaCompile>().configureEach {
     options.release = 17
 }
 
+// JDK 17 在 Windows 上的默认字符集是 windows-1252，读不了中文 Javadoc（JDK 18+ 默认 UTF-8）
+tasks.withType<Javadoc>().configureEach {
+    options.encoding = "UTF-8"
+}
+
 // 与 compileJava 的 release 17 保持一致，避免 "Inconsistent JVM Target" 警告
 kotlin {
     compilerOptions {

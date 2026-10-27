@@ -191,16 +191,17 @@ class JrunLauncherFunctionalTest extends AbstractJrunTest {
                 "fixed and user arguments must arrive unsplit and in order:\n" + r.output());
     }
 
+    /** 不比较 pwd 的字符串：macOS 的 /var 是符号链接，Git Bash 的路径是 /d/...，与 Java 看到的都不一样。 */
     @Test
-    void shellScriptsRunInTheProjectRootWithPositionalArguments() throws IOException {
+    void shellScriptsRunInTheProjectRootWithPositionalArguments() {
         helloProject("""
                 jrun {
-                    script('where', 'shell:echo "PWD=$(pwd)"; echo "ARG1=$1"')
+                    script('where', 'shell:test -f settings.gradle && echo IN_ROOT; echo "ARG1=$1"')
                 }
                 """);
 
         ProcessResult r = runBash(projectDir.resolve("jrun"), projectDir.resolve("main"), Map.of(), "where", "foo");
-        assertTrue(r.output().contains("PWD=" + projectDir.toRealPath()), r.output());
+        assertTrue(r.output().contains("IN_ROOT"), "shell: scripts must run in the project root:\n" + r.output());
         assertTrue(r.output().contains("ARG1=foo"), r.output());
     }
 

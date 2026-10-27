@@ -119,7 +119,8 @@ abstract class AbstractJrunTest {
                 process.destroyForcibly();
                 throw new AssertionError("timed out, output so far:\n" + output);
             }
-            return new ProcessResult(process.exitValue(), output);
+            // Windows 上 java 的 println 输出 \r\n，统一成 \n，多行断言才能跨平台
+            return new ProcessResult(process.exitValue(), output.replace("\r\n", "\n"));
         } catch (IOException e) {
             throw new AssertionError("failed to execute " + script, e);
         } catch (InterruptedException e) {
