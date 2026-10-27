@@ -9,7 +9,8 @@ Gradle plugin + generated launchers (`src/main/resources/jrun/jrun.sh`, `jrun.ba
 - `bash gradlew jrunDist` — GitHub release assets into `build/dist` (also a dependency of `test`)
 - Tests share a persistent TestKit home (`~/.gradle/jrun-testkit`); override with `-PjrunTestKitDir`.
   Concurrent test methods are opt-in with `-PjrunTestParallelism=N` (slower locally: each needs its own cold TestKit daemon)
-- Gradle compat run: `bash gradlew test -PgradleCompatVersion=8.14.3`
+- Gradle compat run: `JAVA_HOME=<jdk21> bash gradlew test -PgradleCompatVersion=8.14.3`
+  (Gradle 8.14 cannot run on JDK 25: "Unsupported class file major version 69")
 
 ## Rules
 
