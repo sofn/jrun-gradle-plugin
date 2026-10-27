@@ -83,7 +83,7 @@ abstract class AbstractJrunTest {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
     }
 
-    /** 当前平台对应的 argfile 子目录名，与插件的 JrunPlugin#platformDir 保持一致。 */
+    /** 当前平台对应的 argfile 子目录名，与插件的 RuntimeMetadataWriter#platformDir 保持一致。 */
     protected static String platformDir() {
         return isWindows() ? "win" : "unix";
     }
