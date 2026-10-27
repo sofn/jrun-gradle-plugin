@@ -116,13 +116,14 @@ for %%I in ("!JAVA_BIN!") do set "JAVA_HOME=%%~dpI.."
 if "!JAVA_HOME:~-1!"=="\" set "JAVA_HOME=!JAVA_HOME:~0,-1!"
 
 rem ---------------------------------------------------------------------------
-rem  Ensure the argfile cache exists
-rem  (--rebuild forces a refresh; CMD has no reliable file-time comparison, so
-rem   run "jrun prepare" after changing dependencies in build.gradle.kts)
+rem  Ensure the argfile cache exists and is fresh
+rem  (content hashes of the build inputs; --rebuild forces a refresh)
 rem ---------------------------------------------------------------------------
 if not exist "%ARGS_DIR%\source.args" goto do_prepare
 if not exist "%ARGS_DIR%\class.args" goto do_prepare
 if "%FORCE_REBUILD%"=="1" goto do_prepare
+call :inputs_fresh
+if errorlevel 1 goto do_prepare
 goto after_prepare
 
 :do_prepare
@@ -202,6 +203,28 @@ exit /b !ERRORLEVEL!
 rem ===========================================================================
 rem  Subroutines
 rem ===========================================================================
+:inputs_fresh
+rem Re-hash every build input listed by jrunInit (inputs.sha256, sha256sum format).
+rem Any changed or missing file means the argfiles may be stale. Sources are kept
+rem fresh by the "gradlew classes" call before class-mode runs.
+if not exist "%ARGS_DIR%\inputs.sha256" exit /b 1
+set "STALE=0"
+for /f "usebackq tokens=1,*" %%H in ("%ARGS_DIR%\inputs.sha256") do (
+    set "IN_PATH=%%I"
+    set "IN_PATH=!IN_PATH:/=\!"
+    if not exist "!IN_PATH!" (
+        set "STALE=1"
+    ) else (
+        set "ACTUAL="
+        for /f "delims=" %%L in ('certutil -hashfile "!IN_PATH!" SHA256 ^| findstr /v ":"') do (
+            if not defined ACTUAL set "ACTUAL=%%L"
+        )
+        set "ACTUAL=!ACTUAL: =!"
+        if /i not "!ACTUAL!"=="%%H" set "STALE=1"
+    )
+)
+exit /b %STALE%
+
 :try_java
 if not "%~1"=="" if exist "%~1" (
     "%~1" -version >nul 2>&1

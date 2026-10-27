@@ -46,6 +46,13 @@ final class RuntimeMetadataWriter {
             props.append(e.getKey()).append('=').append(e.getValue()).append('\n');
         }
         FileWrites.writeIfChanged(outDir.resolve("scripts.properties"), props.toString());
+
+        // 内容指纹：启动器据此判断缓存是否最新（替代 mtime 比较）。必须最后写：
+        // 构建中途失败时不能留下"缓存是新的"这种假信号
+        Path projectDir = project.getProjectDir().toPath();
+        FileWrites.writeIfChanged(argsDir.resolve("inputs.sha256"),
+                InputsFingerprint.inputs(projectDir, project.getRootDir().toPath()));
+        FileWrites.writeIfChanged(argsDir.resolve("sources.sha256"), InputsFingerprint.sources(projectDir));
     }
 
     /** argfile 的平台子目录名，与 jrun 启动器里的 PLATFORM 判定保持一致。 */

@@ -30,8 +30,12 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
   *)                    PLATFORM="unix" ;;
 esac
 ARGS_DIR="$OUT_DIR/$PLATFORM"
-GRADLEW="./gradlew"
-[ -x "$GRADLEW" ] || GRADLEW="gradle"
+GRADLEW="gradle"
+if [[ -f ./gradlew ]]; then GRADLEW="./gradlew"; fi
+# gradlew 在 git 里常丢可执行位，统一用 sh 执行
+gradle_run() {
+  if [[ "$GRADLEW" == "gradle" ]]; then gradle "$@"; else sh "$GRADLEW" "$@"; fi
+}
 
 usage() {
   sed -n '3,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -85,34 +89,77 @@ fi
 export JAVA_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
 
 # ---------------------------------------------------------------------------
-# 确保 argfile 缓存存在、且是最新的
-#   classpath 模式下运行的是 build/classes 里的 .class，所以源码一改就必须重编译，
-#   否则会跑到旧代码。这里用 -newer 比较源码与缓存的修改时间。
+# 运行缓存是否最新：重新计算 jrunInit 写下的内容哈希清单并逐字比较（不看 mtime）
+#   inputs.sha256   构建输入：build / settings / gradle.properties / 版本目录（含构建根目录）
+#   sources.sha256  main/ 与 resources/ 下的全部文件（删除、改名、mtime 回退都能发现）
+#   classpath 模式运行的是 build/classes 里的 .class，源码一变就必须重新编译，否则会跑到旧代码。
+# 规则必须与插件的 InputsFingerprint 一致
 # ---------------------------------------------------------------------------
-needs_prepare=0
-if [[ ! -f "$ARGS_DIR/source.args" || ! -f "$ARGS_DIR/class.args" ]]; then
-  needs_prepare=1
-fi
-if [[ "$needs_prepare" == "0" ]]; then
-  for cfg in build.gradle.kts settings.gradle.kts gradle.properties; do
-    if [[ -f "$cfg" && "$cfg" -nt "$ARGS_DIR/source.args" ]]; then
-      needs_prepare=1
-      break
-    fi
-  done
-fi
-if [[ "$needs_prepare" == "0" ]]; then
-  newer="$(find main test -type f \
-             \( -name '*.java' -o -name '*.kt' -o -name '*.groovy' -o -name '*.scala' \) \
-             -newer "$ARGS_DIR/source.args" -print -quit 2>/dev/null || true)"
-  if [[ -n "$newer" ]]; then
-    needs_prepare=1
-  fi
-fi
+BUILD_FILES=(build.gradle build.gradle.kts gradle.properties gradle/libs.versions.toml settings.gradle settings.gradle.kts)
 
-if [[ "$needs_prepare" == "1" ]]; then
+sha256_files() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$@"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -- "$@"
+  else
+    return 1
+  fi | sed 's/^\([0-9a-f]\{64\}\) [ *]/\1  /'
+}
+
+# settings.gradle(.kts) 所在目录就是 Gradle 构建根目录
+build_root() {
+  local d="$ROOT_DIR"
+  while :; do
+    if [[ -f "$d/settings.gradle.kts" || -f "$d/settings.gradle" ]]; then printf '%s' "$d"; return 0; fi
+    if [[ "$d" == "$(dirname -- "$d")" ]]; then break; fi
+    d="$(dirname -- "$d")"
+  done
+  printf '%s' "$ROOT_DIR"
+}
+
+inputs_manifest() {
+  local -a files=()
+  local f root d prefix=""
+  for f in "${BUILD_FILES[@]}"; do
+    if [[ -f "$f" ]]; then files+=("$f"); fi
+  done
+  root="$(build_root)"
+  if [[ "$root" != "$ROOT_DIR" ]]; then
+    d="$ROOT_DIR"
+    while [[ "$d" != "$root" ]]; do d="$(dirname -- "$d")"; prefix="../$prefix"; done
+    for f in "${BUILD_FILES[@]}"; do
+      if [[ -f "$prefix$f" ]]; then files+=("$prefix$f"); fi
+    done
+  fi
+  if (( ${#files[@]} > 0 )); then sha256_files "${files[@]}"; fi
+}
+
+sources_manifest() {
+  local -a files=()
+  local f
+  while IFS= read -r f; do
+    if [[ -n "$f" ]]; then files+=("$f"); fi
+  done < <(find main resources -type f 2>/dev/null | LC_ALL=C sort)
+  if (( ${#files[@]} > 0 )); then sha256_files "${files[@]}"; fi
+}
+
+cache_fresh() {
+  local now
+  [[ -f "$ARGS_DIR/source.args" && -f "$ARGS_DIR/class.args" ]] || return 1
+  [[ -f "$ARGS_DIR/inputs.sha256" && -f "$ARGS_DIR/sources.sha256" ]] || return 1
+  now="$(inputs_manifest)" || return 1
+  [[ "$now" == "$(cat -- "$ARGS_DIR/inputs.sha256")" ]] || return 1
+  now="$(sources_manifest)" || return 1
+  [[ "$now" == "$(cat -- "$ARGS_DIR/sources.sha256")" ]]
+}
+
+FORCE_REBUILD=0
+if [[ "${1:-}" == "--rebuild" || "${1:-}" == "-r" ]]; then FORCE_REBUILD=1; shift; fi
+
+if [[ "$FORCE_REBUILD" == "1" ]] || ! cache_fresh; then
   echo "→ 准备运行环境 (Gradle jrunInit)..." >&2
-  if ! "$GRADLEW" --quiet --console=plain jrunInit >&2; then
+  if ! gradle_run --quiet --console=plain jrunInit >&2; then
     echo "" >&2
     echo "jrunInit 失败。若在 WSL 下运行，请确认：" >&2
     echo "  1. WSL 内已安装 Linux JDK（java -version 可用），而不是只靠 Windows 的 JAVA_HOME；" >&2
@@ -141,8 +188,8 @@ if [[ -z "$TARGET" ]]; then usage; exit 1; fi
 
 # 内置 Gradle 任务快捷方式
 case "$TARGET" in
-  build|test|clean|classes|jar|check) exec "$GRADLEW" "$TARGET" "$@" ;;
-  init|prepare) exec "$GRADLEW" jrunInit "$@" ;;
+  build|test|clean|classes|jar|check) gradle_run "$TARGET" "$@"; exit $? ;;
+  init|prepare) gradle_run jrunInit "$@"; exit $? ;;
 esac
 
 # 命名 scripts：值可以是 gradle:task、Xxx.java、a.b.C，可带固定参数
@@ -155,7 +202,8 @@ if [[ -f "$OUT_DIR/scripts.properties" ]]; then
       TASK="${PARTS[0]#gradle:}"
       EXTRA=("${PARTS[@]:1}")
       # 注意：不能写 ${ARR[@]:1:+"${ARR[@]:1}"} —— bash 会把 "1:+" 当成算术切片并报错
-      exec "$GRADLEW" "$TASK" ${EXTRA[@]+"${EXTRA[@]}"} "$@"
+      gradle_run "$TASK" ${EXTRA[@]+"${EXTRA[@]}"} "$@"
+      exit $?
     fi
     TARGET="${PARTS[0]}"
     if (( ${#PARTS[@]} > 1 )); then
