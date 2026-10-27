@@ -147,6 +147,8 @@ project's own `./jrun`, so each project keeps its own launcher version — the s
 - `<platform>/inputs.sha256` — content hashes of `build.gradle(.kts)`, `settings.gradle(.kts)`,
   `gradle.properties` and `gradle/libs.versions.toml`, including the build root's files for sub-modules.
 - `<platform>/sources.sha256` — content hashes of everything in `main/` and `resources/`.
+- In multi-module builds both manifests also cover the projects on the runtime classpath (their build files and
+  source directories), and `jrunInit` builds their jars first.
 
 The launcher recomputes the hashes and only calls Gradle when something changed. Content hashes catch what
 mtimes miss: deleted or renamed files, files restored with an older timestamp, version catalog edits.
@@ -182,7 +184,8 @@ cd app && ./jrun dev     # or inside the module
 ```
 
 Every module gets its own launcher, which finds the root `gradlew`. The root writes `build/jrun/modules.properties`
-(project path and name → directory); `-m a:b` falls back to the directory `a/b`.
+(project path and name → directory); `-m a:b` falls back to the directory `a/b`. Modules may depend on plain
+`java-library` projects (`implementation(project(":lib"))`): an edit in `lib` triggers a rebuild on the next run.
 
 ## IDE integration
 
@@ -232,7 +235,8 @@ The plugin has no runtime dependencies (the Kotlin stdlib is `compileOnly`) and 
 - `args(...)` applies to Java targets only.
 - On Windows, `!` inside `shell:` commands is swallowed by CMD's delayed expansion.
 - `jrun.bat` notices content changes of the recorded build inputs, but not newly created build files — use
-  `jrun --rebuild` after adding one. Sources are kept fresh by the `gradlew classes` call it makes.
+  `jrun --rebuild` after adding one. In class mode it calls `gradlew jrunInit` before every run (incremental),
+  which keeps the sources fresh.
 - Shebang scripts cannot live in `main/` (see above).
 - `jrunInit`, `jrunAdd` and `jrunResolve` are not configuration-cache compatible yet.
 - Direct `./jrun <target>` arguments are passed as given; script arguments declared with `scripts.put`
@@ -265,13 +269,13 @@ its location comes from `~/.m2/settings.xml` and IntelliJ's Gradle sync often ca
 | --- | --- | --- |
 | `ScriptResolverTest` (11) | unit | script kinds, legacy splitting, array args, dependsOn validation and cycles, names |
 | `BuildFileEditorTest` (10) | unit | `jrun add` edits: KTS / Groovy, nested blocks, strings and comments, upgrades, CRLF, injection guard |
-| `InputsFingerprintTest` (3) | unit | fingerprint format, order and build-root files |
+| `InputsFingerprintTest` (5) | unit | fingerprint format, order, build-root files, project dependencies |
 | `JrunVersionTest` (1) | unit | version resource |
 | `JrunPluginFunctionalTest` (25) | TestKit | layout, launchers, argfiles, tasks, IDEA configs, Kotlin / Groovy / Spring Boot coexistence |
 | `JrunScriptsDslFunctionalTest` (4) | TestKit | block DSL metadata, Gradle task dependencies, cycle errors |
 | `JrunCliFunctionalTest` (3) | TestKit | `jrunAdd`, `jrunResolve`, module map |
 | `JrunScriptFunctionalTest` (4) | bash | single-file mode, argument passing |
-| `JrunLauncherFunctionalTest` (19) | bash | cache invalidation, JVM options, shebang, scripts, `add`, `init`, delegation, `-m` |
+| `JrunLauncherFunctionalTest` (20) | bash | cache invalidation, JVM options, shebang, scripts, `add`, `init`, delegation, `-m`, module dependencies |
 | `JrunInstallerTest` (3) | bash | `install.sh` against the built assets, checksum tampering |
 | `JrunBatFunctionalTest` (6) | cmd | the same paths through `jrun.bat` (Windows CI only) |
 

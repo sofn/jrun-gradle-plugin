@@ -4,7 +4,7 @@
 
 ---
 
-## 一、现有测试覆盖（89 个用例，其中 6 个只在 Windows 上运行）
+## 一、现有测试覆盖（92 个用例，其中 6 个只在 Windows 上运行）
 
 `./gradlew test` 热缓存下约 40 秒。TestKit 使用持久化目录 `~/.gradle/jrun-testkit`，
 `clean` 之后不再重新下载插件（本地实测：`clean test` 从 6 分 41 秒降到 44 秒）。
@@ -13,13 +13,13 @@
 | --- | --- | --- |
 | `ScriptResolverTest`（11） | 单元 | script 四种目标、字符串分词、数组参数、dependsOn 不存在 / 成环、名称与单行校验 |
 | `BuildFileEditorTest`（10） | 单元 | `jrun add`：KTS / Groovy、跳过嵌套块与字符串注释、原地升级、CRLF、坐标与配置名防注入 |
-| `InputsFingerprintTest`（3） | 单元 | 内容指纹的格式、顺序与构建根目录文件（插件与启动器之间的协议） |
+| `InputsFingerprintTest`（5） | 单元 | 内容指纹的格式、顺序、构建根目录文件与 project 依赖（插件与启动器之间的协议） |
 | `JrunVersionTest`（1） | 单元 | 版本资源与构建版本一致 |
 | `JrunPluginFunctionalTest`（25） | TestKit | 目录扁平化、启动器编码与收窄、版本占位符、argfile、任务注册、IDEA 配置、Kotlin / Groovy / Spring Boot 共存 |
 | `JrunScriptsDslFunctionalTest`（4） | TestKit | 块写法元数据、Gradle 任务依赖顺序、配置期成环报错 |
 | `JrunCliFunctionalTest`（3） | TestKit | `jrunAdd`、`jrunResolve`（本地仓库，离线稳定）、多模块映射 |
 | `JrunScriptFunctionalTest`（4） | bash | 单文件模式、参数透传、含 `=` 的固定参数 |
-| `JrunLauncherFunctionalTest`（19） | bash | 内容哈希失效（删除 / mtime 回退 / 版本目录）、JVM 参数、shebang、数组参数、`shell:`、dependsOn、`add` 回滚、`init`、全局委托、`-m` |
+| `JrunLauncherFunctionalTest`（20） | bash | 内容哈希失效（删除 / mtime 回退 / 版本目录）、JVM 参数、shebang、数组参数、`shell:`、dependsOn、`add` 回滚、`init`、全局委托、`-m`、依赖模块的构建与失效 |
 | `JrunInstallerTest`（3） | bash | 用 `jrunDist` 产物跑 `install.sh`、被篡改的资产被拒绝 |
 | `JrunBatFunctionalTest`（6） | cmd | 同样的核心路径走 `jrun.bat`（`@EnabledOnOs(WINDOWS)`，CI 的 windows-latest 上运行） |
 

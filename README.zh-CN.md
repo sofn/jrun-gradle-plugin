@@ -142,6 +142,8 @@ your-project/
 - `<平台>/inputs.sha256`：`build.gradle(.kts)`、`settings.gradle(.kts)`、`gradle.properties`、
   `gradle/libs.versions.toml` 的内容哈希；子模块还包含构建根目录的这些文件。
 - `<平台>/sources.sha256`：`main/`、`resources/` 下全部文件的内容哈希。
+- 多模块时，两份清单还覆盖运行时 classpath 上的其他模块（它们的构建文件和源码目录），`jrunInit` 也会先把这些模块的
+  jar 构建出来。
 
 启动器重新计算哈希，只有内容变了才调用 Gradle。内容哈希能发现 mtime 发现不了的情况：删除或改名的文件、
 时间戳被回退的文件（解压、`cp -p`）、版本目录的修改。
@@ -177,7 +179,8 @@ cd app && ./jrun dev     # 或者进入模块
 ```
 
 每个模块有自己的启动器，会向上找到根目录的 `gradlew`。根项目写出 `build/jrun/modules.properties`
-（项目路径与名字 → 目录）；查不到时 `-m a:b` 按约定对应目录 `a/b`。
+（项目路径与名字 → 目录）；查不到时 `-m a:b` 按约定对应目录 `a/b`。模块可以依赖普通的 `java-library` 项目
+（`implementation(project(":lib"))`），改了 `lib` 之后下一次运行会自动重新构建。
 
 ## IDEA 集成
 
@@ -260,7 +263,7 @@ cd app && ./jrun dev     # 或者进入模块
 - `args(...)` 只用于 Java 目标。
 - Windows 下，`shell:` 命令里的 `!` 会被 CMD 的延迟展开吞掉。
 - `jrun.bat` 能发现已登记的构建输入的内容变化，但发现不了新增的构建文件，新增后执行一次 `jrun --rebuild`；
-  源码由它每次调用的 `gradlew classes` 保持最新。
+  classpath 模式下它每次运行前都会调用 `gradlew jrunInit`（增量构建），源码因此保持最新。
 - shebang 脚本不能放在 `main/` 里（见上文）。
 - `jrunInit`、`jrunAdd`、`jrunResolve` 暂不兼容 configuration cache。
 - 用 `scripts.put` 写的字符串 script 按空格分词；参数里有空格时用块写法。
@@ -292,13 +295,13 @@ pluginManagement {
 | --- | --- | --- |
 | `ScriptResolverTest`（11） | 单元 | script 类型、字符串分词、数组参数、dependsOn 校验与成环、名称 |
 | `BuildFileEditorTest`（10） | 单元 | `jrun add` 的改写：KTS / Groovy、嵌套块、字符串与注释、升级、CRLF、防注入 |
-| `InputsFingerprintTest`（3） | 单元 | 指纹格式、顺序、构建根目录文件 |
+| `InputsFingerprintTest`（5） | 单元 | 指纹格式、顺序、构建根目录文件、project 依赖 |
 | `JrunVersionTest`（1） | 单元 | 版本资源 |
 | `JrunPluginFunctionalTest`（25） | TestKit | 目录、启动器、argfile、任务、IDEA 配置、与 Kotlin / Groovy / Spring Boot 共存 |
 | `JrunScriptsDslFunctionalTest`（4） | TestKit | 块写法元数据、Gradle 任务依赖、成环报错 |
 | `JrunCliFunctionalTest`（3） | TestKit | `jrunAdd`、`jrunResolve`、模块映射 |
 | `JrunScriptFunctionalTest`（4） | bash | 单文件模式、参数透传 |
-| `JrunLauncherFunctionalTest`（19） | bash | 缓存失效、JVM 参数、shebang、scripts、`add`、`init`、委托、`-m` |
+| `JrunLauncherFunctionalTest`（20） | bash | 缓存失效、JVM 参数、shebang、scripts、`add`、`init`、委托、`-m`、模块依赖 |
 | `JrunInstallerTest`（3） | bash | 用打包产物跑 `install.sh`、篡改资产被拒绝 |
 | `JrunBatFunctionalTest`（6） | cmd | 同样的路径走 `jrun.bat`（只在 Windows CI 上运行） |
 
