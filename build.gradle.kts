@@ -69,6 +69,24 @@ tasks.withType<Test>().configureEach {
     maxHeapSize = "1g"
     systemProperty("jrun.expectedVersion", project.version.toString())
 
+    // TestKit 默认把自己的 Gradle 用户目录放在 build/tmp 下：clean 后就没了，CI 也缓存不到，
+    // 每个 job 都要重新下载 Kotlin / Spring Boot 插件（约 190MB），这是 CI 慢的主因。
+    // 改到固定目录后，daemon 和依赖缓存可以在用例、fork 和多次构建之间复用（CI 用 actions/cache 缓存）。
+    val testKitDir = providers.gradleProperty("jrunTestKitDir")
+        .orElse(gradle.gradleUserHomeDir.resolve("jrun-testkit").path)
+    systemProperty("jrun.testkit.dir", testKitDir.get())
+
+    // 用例都是独立的临时项目，可以用 -PjrunTestParallelism=N 按方法并发执行（按类分 fork 没有效果：
+    // 大部分用例集中在一个测试类里）。默认串行：每个并发用例都要拉起自己的冷 TestKit daemon，
+    // 实测并发 3 个反而更慢（热缓存 36~39s，串行 30s）；提速主要靠上面的持久化 TestKit 目录
+    val parallelism = providers.gradleProperty("jrunTestParallelism").map(String::toInt).orElse(1).get()
+    systemProperty("junit.jupiter.execution.parallel.enabled", "true")
+    systemProperty("junit.jupiter.execution.parallel.mode.default", "concurrent")
+    systemProperty("junit.jupiter.execution.parallel.config.strategy", "fixed")
+    systemProperty("junit.jupiter.execution.parallel.config.fixed.parallelism", parallelism.toString())
+    // TestKit 的 build() 是阻塞调用，ForkJoinPool 会为阻塞线程补位，不封顶就会把所有用例同时跑起来
+    systemProperty("junit.jupiter.execution.parallel.config.fixed.max-pool-size", parallelism.toString())
+
     // 可选：-PgradleCompatVersion=8.14.3 让 TestKit 用指定 Gradle 版本跑，
     // 用于兼容性矩阵（CI 的 gradle-compat 任务）。不传则用当前 Gradle。
     providers.gradleProperty("gradleCompatVersion").orNull?.let { version ->

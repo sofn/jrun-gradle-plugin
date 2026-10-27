@@ -5,10 +5,14 @@ on:
     branches: [ main ]
   pull_request:
   workflow_dispatch:
+  # 每周一 03:00 UTC 跑一次 Gradle 兼容性矩阵（也可以手动触发）
+  schedule:
+    - cron: '0 3 * * 1'
 
 jobs:
   test:
     name: test (${{ matrix.os }}, JDK ${{ matrix.java }})
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -27,6 +31,16 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # TestKit 的依赖缓存（Kotlin / Spring Boot 插件等）；daemon 目录不缓存
+      - name: Cache TestKit dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/jrun-testkit/caches/modules-2
+            ~/.gradle/jrun-testkit/wrapper
+          key: testkit-${{ runner.os }}-${{ hashFiles('src/test/**/*.java') }}
+          restore-keys: testkit-${{ runner.os }}-
+
       - name: Build and test (non-Windows)
         if: runner.os != 'Windows'
         run: ./gradlew build --no-daemon --stacktrace
@@ -43,11 +57,11 @@ jobs:
           path: build/reports/tests/test
           if-no-files-found: ignore
 
-  # 兼容性长跑：在多个 Gradle 版本上验证插件（不在每次提交都跑）
+  # 兼容性长跑：在多个 Gradle 版本上验证插件（每周定时 + 手动触发，不在每次提交都跑）
   gradle-compat:
     name: gradle ${{ matrix.gradle }}
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     strategy:
       fail-fast: false
       matrix:
@@ -59,5 +73,13 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
+      - name: Cache TestKit dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/jrun-testkit/caches/modules-2
+            ~/.gradle/jrun-testkit/wrapper
+          key: testkit-compat-${{ matrix.gradle }}-${{ hashFiles('src/test/**/*.java') }}
+          restore-keys: testkit-compat-${{ matrix.gradle }}-
       - name: Run tests against Gradle ${{ matrix.gradle }}
         run: ./gradlew test --no-daemon -PgradleCompatVersion=${{ matrix.gradle }}

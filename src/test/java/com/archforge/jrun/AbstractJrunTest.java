@@ -71,6 +71,12 @@ abstract class AbstractJrunTest {
                 .withArguments(arguments)
                 .withPluginClasspath();
 
+        String testKitDir = System.getProperty("jrun.testkit.dir");
+        if (testKitDir != null && !testKitDir.isBlank()) {
+            // 固定的 TestKit 目录：daemon 与已下载的插件在用例之间、多次构建之间复用
+            runner = runner.withTestKitDir(new java.io.File(testKitDir));
+        }
+
         // 兼容性矩阵：CI 通过 -PgradleCompatVersion=<ver> 指定，TestKit 会下载并用该版本运行
         String compatVersion = System.getProperty("jrun.gradleCompatVersion");
         if (compatVersion != null && !compatVersion.isBlank()) {
