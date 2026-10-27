@@ -51,6 +51,18 @@ public class JrunPlugin implements Plugin<Project> {
         AtomicReference<List<ScriptResolver.ResolvedScript>> resolvedScripts = new AtomicReference<>(List.of());
         TaskProvider<Task> initTask = registerInitTask(project, extension, resolvedScripts);
         hookStandardTasks(project, initTask);
+        project.getTasks().register(ADD_TASK, JrunAddTask.class, task -> {
+            task.setGroup(GROUP);
+            task.setDescription("Add dependencies to the build script (./jrun add)");
+            task.getConfiguration().convention("implementation");
+            task.getBuildFile().set(project.getBuildFile());
+        });
+        project.getTasks().register(RESOLVE_TASK, JrunResolveTask.class, task -> {
+            task.setGroup(GROUP);
+            task.setDescription("Verify that the dependencies of a configuration resolve (./jrun add)");
+            task.getConfiguration().convention("implementation");
+            task.setConfigurations(project.getConfigurations());
+        });
 
         // kotlin / groovy 的 sourceSet 扩展只有在它们自己被应用后才存在，所以放到 afterEvaluate
         project.afterEvaluate(p -> {

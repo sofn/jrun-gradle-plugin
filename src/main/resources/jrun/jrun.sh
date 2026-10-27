@@ -93,6 +93,43 @@ export JAVA_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
 JVM_OPTS=()
 read -r -a JVM_OPTS <<< "${JAVA_OPTS:-} ${JRUN_OPTS:-}"
 
+# ./jrun add：先改写，再在新一轮构建里解析依赖并刷新缓存；任何一步失败都恢复原文件（对标 uv add）
+add_dependencies() {
+  local cfg="implementation" build_file backup
+  local -a deps=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --test) cfg="testImplementation" ;;
+      --config) shift; cfg="${1:-}" ;;
+      --config=*) cfg="${1#--config=}" ;;
+      -*) echo "jrun add: 未知选项 $1" >&2; return 1 ;;
+      *) deps+=("--dependency=$1") ;;
+    esac
+    shift
+  done
+  if [[ ${#deps[@]} -eq 0 || -z "$cfg" ]]; then
+    echo "用法: ./jrun add [--test | --config <配置名>] <group:artifact[:version]>..." >&2
+    return 1
+  fi
+  build_file="build.gradle.kts"
+  if [[ ! -f "$build_file" ]]; then build_file="build.gradle"; fi
+  mkdir -p -- "$OUT_DIR"
+  backup="$OUT_DIR/$build_file.bak"
+  cp -- "$build_file" "$backup"
+  if gradle_run --quiet --console=plain jrunAdd "--configuration=$cfg" "${deps[@]}" \
+     && gradle_run --quiet --console=plain jrunResolve "--configuration=$cfg" jrunInit; then
+    rm -f -- "$backup"
+    echo "✓ 已添加到 $build_file ($cfg)"
+    return 0
+  fi
+  cp -- "$backup" "$build_file"
+  rm -f -- "$backup"
+  echo "jrun add: 依赖解析失败，已恢复 $build_file" >&2
+  return 1
+}
+
+if [[ "${1:-}" == "add" ]]; then shift; add_dependencies "$@"; exit $?; fi
+
 # ---------------------------------------------------------------------------
 # 运行缓存是否最新：重新计算 jrunInit 写下的内容哈希清单并逐字比较（不看 mtime）
 #   inputs.sha256   构建输入：build / settings / gradle.properties / 版本目录（含构建根目录）

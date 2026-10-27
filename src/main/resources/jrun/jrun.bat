@@ -115,6 +115,8 @@ rem Gradle must use the very same JDK
 for %%I in ("!JAVA_BIN!") do set "JAVA_HOME=%%~dpI.."
 if "!JAVA_HOME:~-1!"=="\" set "JAVA_HOME=!JAVA_HOME:~0,-1!"
 
+if /i "!TARGET!"=="add" goto add_dependencies
+
 rem ---------------------------------------------------------------------------
 rem  Ensure the argfile cache exists and is fresh
 rem  (content hashes of the build inputs; --rebuild forces a refresh)
@@ -250,6 +252,55 @@ type "!FIXED_FILE!" >> "!RUN_FILE!"
 "!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!RUNTIME!" "@!RUN_FILE!" !FINAL_ARGS!
 exit /b !ERRORLEVEL!
 
+:add_dependencies
+rem Edit first, then resolve + refresh in a fresh build; restore the backup on failure
+set "ADD_CFG=implementation"
+set "ADD_DEPS="
+set "REMAIN=!APP_ARGS!"
+:add_parse
+set "FIRST="
+set "REST="
+for /f "tokens=1,*" %%A in ("!REMAIN!") do (
+    set "FIRST=%%A"
+    set "REST=%%B"
+)
+if not defined FIRST goto add_run
+if /i "!FIRST!"=="--test" (
+    set "ADD_CFG=testImplementation"
+) else if /i "!FIRST!"=="--config" (
+    for /f "tokens=1,*" %%A in ("!REST!") do (
+        set "ADD_CFG=%%A"
+        set "REST=%%B"
+    )
+) else if /i "!FIRST:~0,9!"=="--config=" (
+    set "ADD_CFG=!FIRST:~9!"
+) else (
+    set ADD_DEPS=!ADD_DEPS! "--dependency=!FIRST!"
+)
+set "REMAIN=!REST!"
+goto add_parse
+:add_run
+if not defined ADD_DEPS (
+    echo Usage: jrun add [--test ^| --config ^<name^>] ^<group:artifact[:version]^>... 1>&2
+    exit /b 1
+)
+set "BUILD_FILE=build.gradle.kts"
+if not exist "!BUILD_FILE!" set "BUILD_FILE=build.gradle"
+if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
+copy /y "!BUILD_FILE!" "%OUT_DIR%\!BUILD_FILE!.bak" >nul
+call "%GRADLEW%" --quiet --console=plain jrunAdd "--configuration=!ADD_CFG!" !ADD_DEPS!
+if errorlevel 1 goto add_restore
+call "%GRADLEW%" --quiet --console=plain jrunResolve "--configuration=!ADD_CFG!" jrunInit
+if errorlevel 1 goto add_restore
+del "%OUT_DIR%\!BUILD_FILE!.bak" >nul 2>&1
+echo Added to !BUILD_FILE! ^(!ADD_CFG!^)
+exit /b 0
+:add_restore
+copy /y "%OUT_DIR%\!BUILD_FILE!.bak" "!BUILD_FILE!" >nul
+del "%OUT_DIR%\!BUILD_FILE!.bak" >nul 2>&1
+echo jrun add: dependency resolution failed, restored !BUILD_FILE! 1>&2
+exit /b 1
+
 :inputs_fresh
 rem Re-hash every build input listed by jrunInit (inputs.sha256, sha256sum format).
 rem Any changed or missing file means the argfiles may be stale. Sources are kept
@@ -332,6 +383,7 @@ echo.
 echo   jrun Hello.java                  single-file source mode
 echo   jrun com.example.demo.App         classpath mode ^(Spring Boot etc.^)
 echo   jrun ^<script-name^>                run a script from jrun { scripts }
+echo   jrun add [--test] ^<g:a:v^>...       add dependencies to build.gradle(.kts)
 echo   jrun build^|test^|clean^|classes     shortcut for the Gradle task
 echo   jrun init                         regenerate the argfile cache
 echo   jrun --rebuild ^<target^>           refresh the cache, then run

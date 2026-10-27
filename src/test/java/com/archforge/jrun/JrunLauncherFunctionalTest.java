@@ -226,4 +226,29 @@ class JrunLauncherFunctionalTest extends AbstractJrunTest {
         assertFalse(guarded.output().contains("NEVER"), "a failed dependency must stop the chain:\n" + guarded.output());
         assertTrue(guarded.output().contains("broken"), "the failing dependency should be named:\n" + guarded.output());
     }
+
+    @Test
+    void addHandsTheCoordinatesToGradleAndKeepsTheEdit() {
+        helloProject("");
+        fakeGradlew("case \"$*\" in *jrunAdd*) echo '// edited' >> \"$(dirname \"$0\")/build.gradle\" ;; esac\nexit 0\n");
+
+        ProcessResult r = jrun("add", "--test", "com.google.code.gson:gson:2.11");
+        assertEquals(0, r.exitCode(), r.output());
+        assertTrue(gradleCalls().contains(
+                "jrunAdd --configuration=testImplementation --dependency=com.google.code.gson:gson:2.11"), gradleCalls());
+        assertTrue(gradleCalls().contains("jrunResolve --configuration=testImplementation jrunInit"), gradleCalls());
+        assertTrue(read("build.gradle").contains("// edited"), "a successful add keeps the edit");
+    }
+
+    @Test
+    void addRestoresTheBuildScriptWhenResolutionFails() {
+        helloProject("");
+        String original = read("build.gradle");
+        fakeGradlew("case \"$*\" in *jrunAdd*) echo '// edited' >> \"$(dirname \"$0\")/build.gradle\"; exit 0 ;; esac\nexit 1\n");
+
+        ProcessResult r = jrun("add", "com.example:nope:1.0");
+        assertNotEquals(0, r.exitCode(), r.output());
+        assertEquals(original, read("build.gradle"), "a failed add must leave the build script as it was");
+        assertTrue(r.output().contains("已恢复"), r.output());
+    }
 }
