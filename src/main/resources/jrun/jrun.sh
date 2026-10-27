@@ -14,6 +14,7 @@
 
 set -euo pipefail
 JRUN_VERSION="@JRUN_VERSION@"
+ORIG_PWD="$PWD"
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
@@ -87,6 +88,11 @@ if [[ -z "$JAVA_BIN" ]]; then
 fi
 # Gradle 必须使用同一个 JDK，避免 class file 版本不一致
 export JAVA_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
+
+# JAVA_OPTS 在前、JRUN_OPTS 在后：同名 JVM 参数以后者为准。按空白拆分，不做通配符展开
+JVM_OPTS=()
+read -r -a JVM_OPTS <<< "${JAVA_OPTS:-} ${JRUN_OPTS:-}"
+run_java() { exec "$JAVA_BIN" ${JVM_OPTS[@]+"${JVM_OPTS[@]}"} "$@"; }
 
 # ---------------------------------------------------------------------------
 # 运行缓存是否最新：重新计算 jrunInit 写下的内容哈希清单并逐字比较（不看 mtime）
@@ -246,30 +252,40 @@ derive_jvm_main() {
   printf '%s%sKt' "$prefix" "$base"
 }
 
-# 统一的源文件定位：给出文件名时先看当前目录，再到 main/ 下找
+# 源文件定位：调用者所在目录 → 项目根 → main/ 同路径 → main/ 下同名文件
+# （先按调用目录解析，#!/usr/bin/env -S jrun 和在子目录里执行才都能找到文件）
 locate_source() {
-  local t="$1"
+  local t="$1" found
+  if [[ "$t" != /* && -f "$ORIG_PWD/$t" ]]; then printf '%s' "$ORIG_PWD/$t"; return 0; fi
   if [[ -f "$t" ]]; then printf '%s' "$t"; return 0; fi
   if [[ -f "main/$t" ]]; then printf '%s' "main/$t"; return 0; fi
-  local found
   found="$(find main -name "$(basename -- "$t")" -print -quit 2>/dev/null || true)"
   if [[ -n "$found" ]]; then printf '%s' "$found"; return 0; fi
   return 1
+}
+
+# javac 不认 #!；JDK 只对“非 .java 文件名”跳过首行 shebang，所以复制成无扩展名副本再运行
+without_shebang() {
+  local src="$1" copy
+  if [[ "$(head -c 2 -- "$src" 2>/dev/null)" != "#!" ]]; then printf '%s' "$src"; return 0; fi
+  mkdir -p -- "$OUT_DIR/shebang"
+  copy="$OUT_DIR/shebang/$(basename -- "$src" .java)"
+  cp -- "$src" "$copy"
+  printf '%s' "$copy"
 }
 
 case "$TARGET" in
   *.java)
     LOCATED="$(locate_source "$TARGET")" || { echo "找不到源文件: $TARGET" >&2; exit 1; }
     # Java 单文件源码模式：即写即跑，不产生 .class
-    exec "$JAVA_BIN" "@$ROOT_DIR/$ARGS_DIR/source.args" "$LOCATED" "$@"
+    run_java "@$ROOT_DIR/$ARGS_DIR/source.args" "$(without_shebang "$LOCATED")" "$@"
     ;;
   *.kt|*.groovy|*.scala)
     # 非 Java 语言没有单文件源码模式，先编译再按类名启动
     LOCATED="$(locate_source "$TARGET")" || { echo "找不到源文件: $TARGET" >&2; exit 1; }
-    MAIN="$(derive_jvm_main "$LOCATED")"
-    exec "$JAVA_BIN" "@$ROOT_DIR/$ARGS_DIR/class.args" "$MAIN" "$@"
+    run_java "@$ROOT_DIR/$ARGS_DIR/class.args" "$(derive_jvm_main "$LOCATED")" "$@"
     ;;
   *)
-    exec "$JAVA_BIN" "@$ROOT_DIR/$ARGS_DIR/class.args" "$TARGET" "$@"
+    run_java "@$ROOT_DIR/$ARGS_DIR/class.args" "$TARGET" "$@"
     ;;
 esac

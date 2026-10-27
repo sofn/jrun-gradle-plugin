@@ -1,13 +1,17 @@
 package com.archforge.jrun;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.util.Map;
 
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -120,5 +124,54 @@ class JrunLauncherFunctionalTest extends AbstractJrunTest {
 
         assertEquals(0, jrun("--rebuild", "Hello").exitCode());
         assertTrue(gradleCalls().contains("jrunInit"), "--rebuild must refresh even on a cache hit");
+    }
+
+    @Test
+    void jvmOptionsComeFromJavaOptsThenJrunOpts() {
+        helloProject("");
+
+        ProcessResult r = runBash(projectDir.resolve("jrun"), projectDir,
+                Map.of("JAVA_OPTS", "-Djrun.a=1 -Djrun.b=java", "JRUN_OPTS", "-Djrun.b=jrun"), "Hello");
+        assertTrue(r.output().contains("PROP_A=1"), "JAVA_OPTS must reach the JVM:\n" + r.output());
+        assertTrue(r.output().contains("PROP_B=jrun"), "JRUN_OPTS comes last and wins:\n" + r.output());
+    }
+
+    /** #!/usr/bin/env -S ./jrun：javac 不认 #!，启动器要换成 JDK 会跳过首行的无扩展名副本。 */
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void javaFilesWithAShebangRunDirectly() throws IOException {
+        helloProject("");
+        Path script = write("hello.java", """
+                #!/usr/bin/env -S ./jrun
+                public class Shebang {
+                    public static void main(String[] args) {
+                        System.out.println("SHEBANG " + String.join(",", args));
+                    }
+                }
+                """);
+        assertTrue(script.toFile().setExecutable(true));
+
+        ProcessBuilder pb = new ProcessBuilder("./hello.java", "a", "b").directory(projectDir.toFile())
+                .redirectErrorStream(true);
+        pb.environment().put("JAVA_HOME", System.getProperty("java.home"));
+        Process process = pb.start();
+        String out = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(out.contains("SHEBANG a,b"), "the shebang script should run through ./jrun:\n" + out);
+    }
+
+    @Test
+    void relativeSourcePathsResolveFromTheCallingDirectory() {
+        helloProject("");
+        write("tools/Tool.java", """
+                public class Tool {
+                    public static void main(String[] args) {
+                        System.out.println("TOOL");
+                    }
+                }
+                """);
+
+        ProcessResult r = runBash(projectDir.resolve("jrun"), projectDir.resolve("tools"), Map.of(), "Tool.java");
+        assertEquals(0, r.exitCode(), r.output());
+        assertTrue(r.output().contains("TOOL"), r.output());
     }
 }

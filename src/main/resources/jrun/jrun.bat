@@ -16,6 +16,7 @@ rem  Requires CRLF line endings (the plugin writes them).
 rem ===========================================================================
 setlocal EnableExtensions EnableDelayedExpansion
 set "JRUN_VERSION=@JRUN_VERSION@"
+set "ORIG_DIR=%CD%"
 
 cd /d "%~dp0"
 set "OUT_DIR=build\jrun"
@@ -172,7 +173,8 @@ if /i "!EXT!"==".java" (
         echo Source file not found: !TARGET! 1>&2
         exit /b 1
     )
-    "!JAVA_BIN!" "@!ARG_SOURCE!" "!TARGET!" !FINAL_ARGS!
+    call :strip_shebang
+    "!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!ARG_SOURCE!" "!TARGET!" !FINAL_ARGS!
     exit /b !ERRORLEVEL!
 )
 
@@ -190,14 +192,14 @@ if not exist "!TARGET!" (
 call :derive_jvm_main "!TARGET!"
 call "%GRADLEW%" --quiet --console=plain classes
 if errorlevel 1 exit /b 1
-"!JAVA_BIN!" "@!ARG_CLASS!" "!MAIN_CLASS!" !FINAL_ARGS!
+"!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!ARG_CLASS!" "!MAIN_CLASS!" !FINAL_ARGS!
 exit /b !ERRORLEVEL!
 
 :class_mode
 rem Keep build/classes in sync with the sources (incremental, usually fast)
 call "%GRADLEW%" --quiet --console=plain classes
 if errorlevel 1 exit /b 1
-"!JAVA_BIN!" "@!ARG_CLASS!" "!TARGET!" !FINAL_ARGS!
+"!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!ARG_CLASS!" "!TARGET!" !FINAL_ARGS!
 exit /b !ERRORLEVEL!
 
 rem ===========================================================================
@@ -232,8 +234,26 @@ if not "%~1"=="" if exist "%~1" (
 )
 exit /b 0
 
+:strip_shebang
+rem javac rejects "#!"; the JDK only skips that line for files without the
+rem .java extension, so run an extensionless copy. Only the first character is
+rem compared: a literal "!" would be eaten by delayed expansion, and Java
+rem sources never start with "#".
+set "FIRST_LINE="
+set /p FIRST_LINE=<"!TARGET!"
+if not "!FIRST_LINE:~0,1!"=="#" exit /b 0
+if not exist "%OUT_DIR%\shebang" mkdir "%OUT_DIR%\shebang"
+for %%F in ("!TARGET!") do set "SHEBANG_COPY=%OUT_DIR%\shebang\%%~nF"
+copy /y "!TARGET!" "!SHEBANG_COPY!" >nul
+set "TARGET=!SHEBANG_COPY!"
+exit /b 0
+
 :locate_source
-rem Resolve the source file: as given, then under main\
+rem Resolve the source file: the caller's directory, as given, then under main\
+if exist "%ORIG_DIR%\%~1" (
+    set "TARGET=%ORIG_DIR%\%~1"
+    exit /b 0
+)
 if exist "%~1" (
     set "TARGET=%~1"
     exit /b 0
@@ -270,6 +290,8 @@ echo   jrun ^<script-name^>                run a script from jrun { scripts }
 echo   jrun build^|test^|clean^|classes     shortcut for the Gradle task
 echo   jrun init                         regenerate the argfile cache
 echo   jrun --rebuild ^<target^>           refresh the cache, then run
+echo.
+echo   JVM options: JAVA_OPTS, then JRUN_OPTS ^(the later one wins^)
 if exist "%OUT_DIR%\scripts.properties" (
     echo.
     echo Available scripts ^(declared in jrun { scripts }^):
