@@ -2,50 +2,52 @@
 #
 # jrun - run Java like uv / cargo / npm scripts (Linux / macOS / WSL / Git Bash)
 #
-#   ./jrun Hello.java                 single-file source mode
-#   ./jrun com.example.demo.App        classpath mode (Spring Boot etc.)
-#   ./jrun <script-name>               run a script declared in jrun { scripts }
-#   ./jrun build|test|clean|classes    shortcut for the matching Gradle task
-#   ./jrun init                        regenerated the argfile cache (same as `gradle jrunInit`)
-#   ./jrun --help
+# 同一份脚本有两种用法：
+#   - 项目里的 ./jrun：由 jrun-gradle-plugin 生成，版本跟随项目
+#   - 全局命令 ~/.local/bin/jrun（一键安装）：jrun init 新建项目；在项目里执行时委托给项目自己的 ./jrun
 #
-# 本文件由 jrun-gradle-plugin 自动生成，请勿手改；配置写在 build.gradle.kts。
-# Windows 下也可以用 jrun.bat (CMD) 或 jrun.ps1 (PowerShell)。
+# 本文件由 jrun-gradle-plugin 生成，请勿手改；配置写在 build.gradle.kts。
+# Windows 下用 jrun.bat（PowerShell 也可以直接执行 jrun.bat）。
 
 set -euo pipefail
 JRUN_VERSION="@JRUN_VERSION@"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 ORIG_PWD="$PWD"
 
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ROOT_DIR"
+usage() {
+  cat <<'EOF'
+jrun - run Java like uv / cargo / npm scripts
 
-OUT_DIR="build/jrun"
+  jrun init [dir]                    create a new jrun project (global command)
+  ./jrun Hello.java                  single-file source mode
+  ./jrun com.example.demo.App        classpath mode (Spring Boot etc.)
+  ./jrun <script> [args...]          run a script declared in jrun { }
+  ./jrun add [--test|--config <c>] <group:artifact[:version]>...
+  ./jrun build|test|clean|classes    shortcut for the Gradle task
+  ./jrun --rebuild <target>          refresh the runtime cache first
+  ./jrun init                        (inside a project) refresh the runtime cache
+  ./jrun --version | --help
+
+  JVM options: JAVA_OPTS, then JRUN_OPTS (the later one wins)
+EOF
+  if [[ -f build/jrun/scripts.properties ]]; then
+    echo
+    echo "Scripts:"
+    sed 's/^/  /' build/jrun/scripts.properties
+  fi
+}
+
+is_project_dir() { [[ -f "$1/build.gradle.kts" || -f "$1/build.gradle" ]]; }
+
 # argfile 是平台相关的（Windows 用 D:\... + ";"，Linux/WSL 用 /mnt/d/... + ":"），
 # 按平台分子目录，避免 Windows 与 WSL 共用同一个 build/ 时互相覆盖。
-#
-# 注意区分三种情况：
 #   MINGW/MSYS/CYGWIN = Windows 上的 Git Bash -> 用 Windows 版 argfile（win）
 #   Linux（含 WSL）/Darwin                    -> 用 POSIX 版 argfile（unix）
 case "$(uname -s 2>/dev/null || echo unknown)" in
   MINGW*|MSYS*|CYGWIN*) PLATFORM="win" ;;
   *)                    PLATFORM="unix" ;;
 esac
-ARGS_DIR="$OUT_DIR/$PLATFORM"
-GRADLEW="gradle"
-if [[ -f ./gradlew ]]; then GRADLEW="./gradlew"; fi
-# gradlew 在 git 里常丢可执行位，统一用 sh 执行
-gradle_run() {
-  if [[ "$GRADLEW" == "gradle" ]]; then gradle "$@"; else sh "$GRADLEW" "$@"; fi
-}
-
-usage() {
-  sed -n '3,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
-  if [ -f "$OUT_DIR/scripts.properties" ]; then
-    echo
-    echo "可用 scripts（build.gradle.kts 的 jrun { scripts } 中声明）:"
-    sed 's/^/  /' "$OUT_DIR/scripts.properties"
-  fi
-}
 
 # ---------------------------------------------------------------------------
 # 定位可用 java：PATH 上的 java 可能是坏的 shim，因此逐个候选实测 -version
@@ -62,32 +64,154 @@ is_foreign_exe() {
   return 1
 }
 
-JAVA_BIN=""
-for candidate in \
-  "${JAVA_HOME:-}/bin/java" \
-  "${JAVA_HOME:-}/bin/java.exe" \
-  "${JDK_HOME:-}/bin/java" \
-  "$(command -v java || true)"; do
-  candidate="$(normalize_path "$candidate")"
-  # POSIX 平台必须用原生 java；Windows 上的 bash（MSYS）则不限制
-  if [[ "$PLATFORM" == "unix" ]] && is_foreign_exe "$candidate"; then
-    continue
-  fi
-  if java_works "$candidate"; then JAVA_BIN="$candidate"; break; fi
-done
+find_java() {
+  local candidate
+  JAVA_BIN=""
+  for candidate in \
+    "${JAVA_HOME:-}/bin/java" \
+    "${JAVA_HOME:-}/bin/java.exe" \
+    "${JDK_HOME:-}/bin/java" \
+    "$(command -v java || true)"; do
+    candidate="$(normalize_path "$candidate")"
+    # POSIX 平台必须用原生 java；Windows 上的 bash（MSYS）则不限制
+    if [[ "$PLATFORM" == "unix" ]] && is_foreign_exe "$candidate"; then
+      continue
+    fi
+    if java_works "$candidate"; then JAVA_BIN="$candidate"; break; fi
+  done
 
-if [[ -z "$JAVA_BIN" ]]; then
-  if [[ "$PLATFORM" == "unix" ]] && command -v java >/dev/null 2>&1; then
-    echo "只找到了 Windows 版的 java，它无法读取 Linux 路径 ($(command -v java))。" >&2
-    echo "请在当前环境安装原生 JDK，例如: sudo apt install openjdk-21-jdk" >&2
-    echo "或者改用 Windows 侧的 jrun.bat。" >&2
-  else
-    echo "未找到可用的 java，请设置 JAVA_HOME 指向 JDK 11+ 安装目录" >&2
+  if [[ -z "$JAVA_BIN" ]]; then
+    if [[ "$PLATFORM" == "unix" ]] && command -v java >/dev/null 2>&1; then
+      echo "只找到了 Windows 版的 java，它无法读取 Linux 路径 ($(command -v java))。" >&2
+      echo "请在当前环境安装原生 JDK，例如: sudo apt install openjdk-21-jdk" >&2
+      echo "或者改用 Windows 侧的 jrun.bat。" >&2
+    else
+      echo "未找到可用的 java，请设置 JAVA_HOME 指向 JDK 11+ 安装目录" >&2
+    fi
+    exit 1
   fi
+  # Gradle 必须使用同一个 JDK，避免 class file 版本不一致
+  JAVA_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
+  export JAVA_HOME
+}
+
+find_gradlew() {
+  if [[ -f "$ROOT_DIR/gradlew" ]]; then printf '%s' "$ROOT_DIR/gradlew"; else printf 'gradle'; fi
+}
+
+# gradlew 在 git 里常丢可执行位，统一用 sh 执行
+gradle_run() {
+  if [[ "$GRADLEW" == "gradle" ]]; then gradle "$@"; else sh "$GRADLEW" "$@"; fi
+}
+
+# ---------------------------------------------------------------------------
+# 全局命令：jrun init，或者委托给最近项目自己的 ./jrun
+# ---------------------------------------------------------------------------
+wrapper_template_dir() { printf '%s' "${JRUN_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/jrun}/wrapper"; }
+
+# jrun init [目录]：生成最小项目 + Gradle wrapper（来自安装时下载的模板）+ 项目自己的启动器
+init_project() {
+  local target="${1:-.}" name template
+  if [[ "$target" == -* ]]; then echo "用法: jrun init [目录]" >&2; return 1; fi
+  mkdir -p -- "$target"
+  target="$(cd -- "$target" && pwd)"
+  if is_project_dir "$target"; then
+    echo "jrun init: $target 已经是 Gradle 项目（存在 build.gradle(.kts)）" >&2
+    return 1
+  fi
+  name="$(basename -- "$target" | tr -c 'A-Za-z0-9._\n-' '-')"
+  {
+    if [[ -n "${JRUN_PLUGIN_DIR:-}" ]]; then
+      # 插件发布前 / 开发期：直接引用插件源码
+      printf 'pluginManagement {\n    includeBuild("%s")\n}\n\n' "$(cd -- "$JRUN_PLUGIN_DIR" && pwd)"
+    fi
+    printf 'rootProject.name = "%s"\n' "$name"
+  } > "$target/settings.gradle.kts"
+  cat > "$target/build.gradle.kts" <<EOF
+plugins {
+    id("com.archforge.jrun") version "$JRUN_VERSION"
+}
+
+// Dependencies go here, or run: ./jrun add <group:artifact:version>
+dependencies {
+}
+
+jrun {
+    mainClass = "Main"
+}
+EOF
+  mkdir -p -- "$target/main"
+  if [[ ! -f "$target/main/Main.java" ]]; then
+    cat > "$target/main/Main.java" <<'EOF'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello from jrun");
+    }
+}
+EOF
+  fi
+  if [[ ! -f "$target/.gitignore" ]]; then printf 'build/\n.gradle/\n.idea/\n*.iml\n' > "$target/.gitignore"; fi
+  template="$(wrapper_template_dir)"
+  if [[ -f "$template/gradle/wrapper/gradle-wrapper.jar" && ! -f "$target/gradlew" ]]; then
+    mkdir -p -- "$target/gradle/wrapper"
+    cp -- "$template/gradlew" "$template/gradlew.bat" "$target/"
+    cp -- "$template/gradle/wrapper/gradle-wrapper.jar" "$template/gradle/wrapper/gradle-wrapper.properties" \
+      "$target/gradle/wrapper/"
+    chmod +x "$target/gradlew"
+  fi
+  cp -- "$SCRIPT_PATH" "$target/jrun"
+  chmod +x "$target/jrun"
+  echo "已创建 jrun 项目: $target"
+  echo "  cd $(basename -- "$target") && ./jrun                 # 运行 main/Main.java"
+  echo "  ./jrun add com.google.code.gson:gson:2.11     # 添加依赖"
+  if [[ ! -f "$target/gradlew" ]]; then
+    echo "提示: 没有 Gradle wrapper 模板（用一键安装脚本安装 jrun 时会一并装好），首次运行需要本机已安装 Gradle" >&2
+  fi
+}
+
+# 全局命令（例如 ~/.local/bin/jrun）：委托给最近项目自己的 ./jrun（版本跟随项目，与 gradlew 同理）
+global_main() {
+  local dir="$ORIG_PWD"
+  case "${1:-}" in
+    --version|-V) echo "jrun $JRUN_VERSION"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    init) shift; init_project "$@"; exit $? ;;
+  esac
+  while :; do
+    if is_project_dir "$dir"; then
+      if [[ -f "$dir/jrun" ]]; then exec bash "$dir/jrun" "$@"; fi
+      if grep -qs "com.archforge.jrun" "$dir/build.gradle.kts" "$dir/build.gradle"; then
+        echo "→ 生成项目启动器 (Gradle jrunInit)..." >&2
+        (cd -- "$dir" && ROOT_DIR="$dir" && GRADLEW="$(find_gradlew)" && find_java \
+          && gradle_run --quiet --console=plain jrunInit) >&2 || exit 1
+        exec bash "$dir/jrun" "$@"
+      fi
+    fi
+    if [[ "$dir" == "$(dirname -- "$dir")" ]]; then break; fi
+    dir="$(dirname -- "$dir")"
+  done
+  if [[ $# -eq 0 ]]; then usage; exit 1; fi
+  echo "jrun: 当前目录不在 jrun 项目中。新建项目: jrun init <目录>" >&2
   exit 1
-fi
-# Gradle 必须使用同一个 JDK，避免 class file 版本不一致
-export JAVA_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
+}
+
+if ! is_project_dir "$SCRIPT_DIR"; then global_main "$@"; fi
+
+# ---------------------------------------------------------------------------
+# 项目模式
+# ---------------------------------------------------------------------------
+ROOT_DIR="$SCRIPT_DIR"
+cd "$ROOT_DIR"
+OUT_DIR="build/jrun"
+ARGS_DIR="$OUT_DIR/$PLATFORM"
+GRADLEW="$(find_gradlew)"
+
+case "${1:-}" in
+  --version|-V) echo "jrun $JRUN_VERSION"; exit 0 ;;
+  -h|--help) usage; exit 0 ;;
+esac
+
+find_java
 
 # JAVA_OPTS 在前、JRUN_OPTS 在后：同名 JVM 参数以后者为准。按空白拆分，不做通配符展开
 JVM_OPTS=()
@@ -220,7 +344,6 @@ fi
 # 解析目标
 # ---------------------------------------------------------------------------
 TARGET="${1:-}"
-if [[ "$TARGET" == "-h" || "$TARGET" == "--help" ]]; then usage; exit 0; fi
 shift || true
 
 if [[ -z "$TARGET" && -f "$OUT_DIR/default-target.txt" ]]; then

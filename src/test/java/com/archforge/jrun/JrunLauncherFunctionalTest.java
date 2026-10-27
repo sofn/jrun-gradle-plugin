@@ -251,4 +251,72 @@ class JrunLauncherFunctionalTest extends AbstractJrunTest {
         assertEquals(original, read("build.gradle"), "a failed add must leave the build script as it was");
         assertTrue(r.output().contains("已恢复"), r.output());
     }
+
+    /** 模拟 ~/.local/bin/jrun：同一份模板，放在没有构建文件的目录里。 */
+    private Path globalJrun() throws IOException {
+        Path jrun = projectDir.resolve("home/.local/bin/jrun");
+        Files.createDirectories(jrun.getParent());
+        Files.writeString(jrun, LauncherGenerator.render("jrun.sh"));
+        return jrun;
+    }
+
+    @Test
+    void theLauncherReportsItsVersionGloballyAndInsideProjects() throws IOException {
+        assertEquals("jrun " + JrunVersion.get(),
+                runBash(globalJrun(), projectDir, Map.of(), "--version").output().trim());
+        helloProject("");
+        assertEquals("jrun " + JrunVersion.get(), jrun("--version").output().trim());
+    }
+
+    @Test
+    void globalInitScaffoldsAProjectThatBuildsAndRuns() throws IOException {
+        Path jrun = globalJrun();
+        Path wrapper = projectDir.resolve("home/.local/share/jrun/wrapper");
+        Files.createDirectories(wrapper.resolve("gradle/wrapper"));
+        for (String file : new String[] {"gradlew", "gradlew.bat"}) {
+            Files.copy(Path.of(file), wrapper.resolve(file));
+        }
+        for (String file : new String[] {"gradle-wrapper.jar", "gradle-wrapper.properties"}) {
+            Files.copy(Path.of("gradle/wrapper", file), wrapper.resolve("gradle/wrapper/" + file));
+        }
+
+        ProcessResult r = runBash(jrun, projectDir,
+                Map.of("HOME", projectDir.resolve("home").toString(), "XDG_DATA_HOME", "", "JRUN_HOME", ""),
+                "init", "demo");
+        assertEquals(0, r.exitCode(), r.output());
+        assertEquals("rootProject.name = \"demo\"\n", read("demo/settings.gradle.kts"));
+        assertTrue(read("demo/build.gradle.kts")
+                .contains("id(\"com.archforge.jrun\") version \"" + JrunVersion.get() + "\""));
+        assertTrue(exists("demo/main/Main.java") && exists("demo/.gitignore"));
+        assertTrue(exists("demo/gradlew") && exists("demo/gradle/wrapper/gradle-wrapper.jar"),
+                "init should copy the Gradle wrapper so no Gradle install is needed");
+        assertTrue(Files.isExecutable(projectDir.resolve("demo/jrun")));
+
+        // 生成的项目要能被插件正常构建；TestKit 注入插件时 plugins 块里不能写 version，先去掉
+        Path demo = projectDir.resolve("demo");
+        write("demo/build.gradle.kts", read("demo/build.gradle.kts").replaceAll(" version \"[^\"]+\"", ""));
+        runnerIn(demo, "jrunInit").build();
+        ProcessResult run = runBash(demo.resolve("jrun"), demo, Map.of());
+        assertEquals(0, run.exitCode(), run.output());
+        assertTrue(run.output().contains("Hello from jrun"), run.output());
+    }
+
+    @Test
+    void initRefusesToTouchAnExistingProject() throws IOException {
+        settings("existing");
+        minimalBuild();
+
+        ProcessResult r = runBash(globalJrun(), projectDir, Map.of(), "init", ".");
+        assertNotEquals(0, r.exitCode(), r.output());
+        assertTrue(r.output().contains("已经是 Gradle 项目"), r.output());
+    }
+
+    @Test
+    void theGlobalLauncherDelegatesToTheNearestProject() throws IOException {
+        helloProject("");
+
+        ProcessResult r = runBash(globalJrun(), projectDir.resolve("main"), Map.of(), "Hello");
+        assertEquals(0, r.exitCode(), r.output());
+        assertTrue(r.output().contains("HELLO"), r.output());
+    }
 }

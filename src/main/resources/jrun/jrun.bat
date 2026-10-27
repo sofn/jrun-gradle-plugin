@@ -17,8 +17,13 @@ rem ===========================================================================
 setlocal EnableExtensions EnableDelayedExpansion
 set "JRUN_VERSION=@JRUN_VERSION@"
 set "ORIG_DIR=%CD%"
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+rem Same file, two roles: the project's own launcher, or the global command
+rem (no build file next to it), which creates projects and delegates to them
+if not exist "%SCRIPT_DIR%\build.gradle.kts" if not exist "%SCRIPT_DIR%\build.gradle" goto global_main
 
-cd /d "%~dp0"
+cd /d "%SCRIPT_DIR%"
 set "OUT_DIR=build\jrun"
 rem argfiles are platform specific: Windows and WSL share build/, so keep them apart
 set "ARGS_DIR=%OUT_DIR%\win"
@@ -59,6 +64,8 @@ if /i "!FIRST!"=="-r" (
 )
 if /i "!FIRST!"=="--help" goto show_help
 if /i "!FIRST!"=="-h" goto show_help
+if /i "!FIRST!"=="--version" goto print_version
+if /i "!FIRST!"=="-V" goto print_version
 if not defined TARGET (
     set "TARGET=!FIRST!"
 ) else (
@@ -377,9 +384,133 @@ if /i "!EXT!"==".kt" set "SUFFIX=Kt"
 set "MAIN_CLASS=!PREFIX!!BASE!!SUFFIX!"
 exit /b 0
 
+:print_version
+echo jrun %JRUN_VERSION%
+exit /b 0
+
+:find_gradlew
+rem In multi-module builds gradlew.bat lives in the build root: search upwards
+set "GRADLEW=gradle"
+set "FG_DIR=%~1"
+:fg_loop
+if exist "!FG_DIR!\gradlew.bat" (
+    set "GRADLEW=!FG_DIR!\gradlew.bat"
+    exit /b 0
+)
+for %%I in ("!FG_DIR!\..") do set "FG_PARENT=%%~fI"
+if /i "!FG_PARENT!"=="!FG_DIR!" exit /b 0
+set "FG_DIR=!FG_PARENT!"
+goto fg_loop
+
+:global_main
+rem Global command (e.g. %USERPROFILE%\.local\bin\jrun.bat): delegate to the nearest
+rem project's own launcher so the project pins its jrun version (like gradlew)
+if /i "%~1"=="--version" goto print_version
+if /i "%~1"=="-V" goto print_version
+if /i "%~1"=="--help" goto show_help
+if /i "%~1"=="-h" goto show_help
+if /i "%~1"=="init" goto global_init
+set "DIR=%ORIG_DIR%"
+:global_walk
+if exist "!DIR!\build.gradle.kts" goto global_found
+if exist "!DIR!\build.gradle" goto global_found
+goto global_up
+:global_found
+if exist "!DIR!\jrun.bat" (
+    call "!DIR!\jrun.bat" %*
+    exit /b !ERRORLEVEL!
+)
+findstr /m /c:"com.archforge.jrun" "!DIR!\build.gradle.kts" "!DIR!\build.gradle" >nul 2>&1
+if errorlevel 1 goto global_up
+echo Generating the project launcher ^(Gradle jrunInit^)... 1>&2
+pushd "!DIR!"
+call :find_gradlew "!DIR!"
+call "!GRADLEW!" --quiet --console=plain jrunInit
+set "RC=!ERRORLEVEL!"
+popd
+if not "!RC!"=="0" exit /b !RC!
+call "!DIR!\jrun.bat" %*
+exit /b !ERRORLEVEL!
+:global_up
+for %%I in ("!DIR!\..") do set "PARENT=%%~fI"
+if /i "!PARENT!"=="!DIR!" goto global_none
+set "DIR=!PARENT!"
+goto global_walk
+:global_none
+echo jrun: not inside a jrun project. Create one with: jrun init ^<dir^> 1>&2
+exit /b 1
+
+:global_init
+set "TARGET_DIR=%~2"
+if not defined TARGET_DIR set "TARGET_DIR=."
+if not exist "!TARGET_DIR!" mkdir "!TARGET_DIR!"
+pushd "!TARGET_DIR!" || exit /b 1
+set "TARGET_DIR=!CD!"
+popd
+if exist "!TARGET_DIR!\build.gradle.kts" goto init_exists
+if exist "!TARGET_DIR!\build.gradle" goto init_exists
+for %%I in ("!TARGET_DIR!") do set "PROJECT_NAME=%%~nxI"
+set "SETTINGS=!TARGET_DIR!\settings.gradle.kts"
+type nul > "!SETTINGS!"
+if not defined JRUN_PLUGIN_DIR goto init_settings_name
+for %%I in ("%JRUN_PLUGIN_DIR%") do set "PLUGIN_DIR=%%~fI"
+set "PLUGIN_DIR=!PLUGIN_DIR:\=/!"
+>>"!SETTINGS!" echo pluginManagement {
+>>"!SETTINGS!" echo     includeBuild("!PLUGIN_DIR!")
+>>"!SETTINGS!" echo }
+>>"!SETTINGS!" echo.
+:init_settings_name
+>>"!SETTINGS!" echo rootProject.name = "!PROJECT_NAME!"
+set "BUILD=!TARGET_DIR!\build.gradle.kts"
+>"!BUILD!" echo plugins {
+>>"!BUILD!" echo     id("com.archforge.jrun") version "%JRUN_VERSION%"
+>>"!BUILD!" echo }
+>>"!BUILD!" echo.
+>>"!BUILD!" echo // Dependencies go here, or run: jrun add ^<group:artifact:version^>
+>>"!BUILD!" echo dependencies {
+>>"!BUILD!" echo }
+>>"!BUILD!" echo.
+>>"!BUILD!" echo jrun {
+>>"!BUILD!" echo     mainClass = "Main"
+>>"!BUILD!" echo }
+if not exist "!TARGET_DIR!\main" mkdir "!TARGET_DIR!\main"
+set "MAIN=!TARGET_DIR!\main\Main.java"
+if exist "!MAIN!" goto init_gitignore
+>"!MAIN!" echo public class Main {
+>>"!MAIN!" echo     public static void main(String[] args) {
+>>"!MAIN!" echo         System.out.println("Hello from jrun");
+>>"!MAIN!" echo     }
+>>"!MAIN!" echo }
+:init_gitignore
+if exist "!TARGET_DIR!\.gitignore" goto init_wrapper
+>"!TARGET_DIR!\.gitignore" echo build/
+>>"!TARGET_DIR!\.gitignore" echo .gradle/
+>>"!TARGET_DIR!\.gitignore" echo .idea/
+>>"!TARGET_DIR!\.gitignore" echo *.iml
+:init_wrapper
+set "TEMPLATE=%JRUN_HOME%"
+if not defined TEMPLATE set "TEMPLATE=%LOCALAPPDATA%\jrun"
+set "TEMPLATE=!TEMPLATE!\wrapper"
+if not exist "!TEMPLATE!\gradle\wrapper\gradle-wrapper.jar" goto init_launcher
+if exist "!TARGET_DIR!\gradlew.bat" goto init_launcher
+if not exist "!TARGET_DIR!\gradle\wrapper" mkdir "!TARGET_DIR!\gradle\wrapper"
+copy /y "!TEMPLATE!\gradlew" "!TARGET_DIR!\" >nul
+copy /y "!TEMPLATE!\gradlew.bat" "!TARGET_DIR!\" >nul
+copy /y "!TEMPLATE!\gradle\wrapper\gradle-wrapper.jar" "!TARGET_DIR!\gradle\wrapper\" >nul
+copy /y "!TEMPLATE!\gradle\wrapper\gradle-wrapper.properties" "!TARGET_DIR!\gradle\wrapper\" >nul
+:init_launcher
+copy /y "%~f0" "!TARGET_DIR!\jrun.bat" >nul
+echo Created jrun project: !TARGET_DIR!
+echo   cd "!TARGET_DIR!" ^&^& jrun
+exit /b 0
+:init_exists
+echo jrun init: !TARGET_DIR! is already a Gradle project 1>&2
+exit /b 1
+
 :show_help
 echo jrun - run Java like uv / cargo / npm scripts ^(Windows CMD version^)
 echo.
+echo   jrun init [dir]                  create a new jrun project ^(global command^)
 echo   jrun Hello.java                  single-file source mode
 echo   jrun com.example.demo.App         classpath mode ^(Spring Boot etc.^)
 echo   jrun ^<script-name^>                run a script from jrun { scripts }
@@ -387,6 +518,7 @@ echo   jrun add [--test] ^<g:a:v^>...       add dependencies to build.gradle(.kt
 echo   jrun build^|test^|clean^|classes     shortcut for the Gradle task
 echo   jrun init                         regenerate the argfile cache
 echo   jrun --rebuild ^<target^>           refresh the cache, then run
+echo   jrun --version
 echo.
 echo   JVM options: JAVA_OPTS, then JRUN_OPTS ^(the later one wins^)
 if exist "%OUT_DIR%\scripts.properties" (

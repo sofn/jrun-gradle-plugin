@@ -95,6 +95,11 @@ abstract class AbstractJrunTest {
         return runner;
     }
 
+    /** 在任意目录上跑 TestKit（例如 jrun init 生成的项目）。 */
+    protected GradleRunner runnerIn(Path dir, String... arguments) {
+        return runner(arguments).withProjectDir(dir.toFile());
+    }
+
     /** 用 bash 执行脚本；cwd 为工作目录，env 覆盖默认环境（JAVA_HOME 指向当前 JDK）。 */
     protected ProcessResult runBash(Path script, Path cwd, Map<String, String> env, String... args) {
         String bash = findBash();
