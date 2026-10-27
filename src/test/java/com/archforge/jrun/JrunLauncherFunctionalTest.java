@@ -339,4 +339,31 @@ class JrunLauncherFunctionalTest extends AbstractJrunTest {
         jrun("-m", "app", "dev");
         assertTrue(gradleCalls().contains("jrunInit"), "the module launcher must use the root gradlew");
     }
+
+    /** 回归：jrunInit 曾只编译本模块，classpath 上的 lib.jar 不存在；lib 的改动也不在 app 的指纹里。 */
+    @Test
+    void aModuleRunsAgainstItsProjectDependencyAndNoticesChangesInIt() {
+        write("settings.gradle", "rootProject.name = 'multi'\ninclude 'app', 'lib'\n");
+        buildScript("plugins { id 'com.archforge.jrun' }\n");
+        write("lib/build.gradle", "plugins { id 'java-library' }\n");
+        write("lib/src/main/java/lib/Greeter.java",
+                "package lib; public class Greeter { public static String greet() { return \"FROM_LIB\"; } }\n");
+        write("app/build.gradle", "plugins { id 'com.archforge.jrun' }\n"
+                + "dependencies { implementation project(':lib') }\njrun { scripts.put('dev', 'App') }\n");
+        write("app/main/App.java",
+                "public class App { public static void main(String[] a) { System.out.println(lib.Greeter.greet()); } }\n");
+        runner("jrunInit").build();
+        fakeGradlew("exit 0\n");
+
+        ProcessResult r = jrun("-m", "app", "dev");
+        assertEquals(0, r.exitCode(), r.output());
+        assertTrue(r.output().contains("FROM_LIB"), "jrunInit must build the module's project dependencies:\n"
+                + r.output());
+        assertEquals("", gradleCalls(), "a fresh cache must not start Gradle");
+
+        write("lib/src/main/java/lib/Greeter.java",
+                "package lib; public class Greeter { public static String greet() { return \"CHANGED\"; } }\n");
+        jrun("-m", "app", "dev");
+        assertTrue(gradleCalls().contains("jrunInit"), "a change in a project dependency must refresh the cache");
+    }
 }

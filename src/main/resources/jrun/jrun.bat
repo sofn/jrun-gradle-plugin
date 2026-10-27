@@ -219,8 +219,8 @@ if /i "!EXT!"==".java" goto rjt_source
 if /i "!EXT!"==".kt" goto rjt_jvm
 if /i "!EXT!"==".groovy" goto rjt_jvm
 if /i "!EXT!"==".scala" goto rjt_jvm
-rem Keep build/classes in sync with the sources (incremental, usually fast)
-call "!GRADLEW!" --quiet --console=plain classes
+rem Keep build/classes and the jars of other modules in sync (incremental, usually fast)
+call "!GRADLEW!" --quiet --console=plain jrunInit
 if errorlevel 1 exit /b 1
 set "PROGRAM=!TARGET!"
 set "RUNTIME=!ARG_CLASS!"
@@ -242,7 +242,7 @@ if not exist "!TARGET!" (
     exit /b 1
 )
 call :derive_jvm_main "!TARGET!"
-call "!GRADLEW!" --quiet --console=plain classes
+call "!GRADLEW!" --quiet --console=plain jrunInit
 if errorlevel 1 exit /b 1
 set "PROGRAM=!MAIN_CLASS!"
 set "RUNTIME=!ARG_CLASS!"
@@ -312,7 +312,7 @@ exit /b 1
 :inputs_fresh
 rem Re-hash every build input listed by jrunInit (inputs.sha256, sha256sum format).
 rem Any changed or missing file means the argfiles may be stale. Sources are kept
-rem fresh by the "gradlew classes" call before class-mode runs.
+rem fresh by the "gradlew jrunInit" call before class-mode runs.
 if not exist "%ARGS_DIR%\inputs.sha256" exit /b 1
 set "STALE=0"
 for /f "usebackq tokens=1,*" %%H in ("%ARGS_DIR%\inputs.sha256") do (

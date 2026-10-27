@@ -48,6 +48,25 @@ class InputsFingerprintTest {
     }
 
     @Test
+    void sourcesIncludeTheSourceRootsOfProjectDependencies() throws IOException {
+        write("app/main/App.java", "hello\n");
+        write("lib/src/main/java/lib/Greeter.java", "hello\n");
+
+        assertEquals(HELLO + "  ../lib/src/main/java/lib/Greeter.java\n" + HELLO + "  main/App.java\n",
+                InputsFingerprint.sources(root.resolve("app"), java.util.List.of("../lib/src/main/java")));
+    }
+
+    @Test
+    void inputsIncludeTheBuildFilesOfProjectDependencies() throws IOException {
+        write("settings.gradle", "hello\n");
+        write("app/build.gradle", "hello\n");
+        write("lib/build.gradle", "hello\n");
+
+        assertEquals(HELLO + "  build.gradle\n" + HELLO + "  ../settings.gradle\n" + HELLO + "  ../lib/build.gradle\n",
+                InputsFingerprint.inputs(root.resolve("app"), root, java.util.List.of(root.resolve("lib"))));
+    }
+
+    @Test
     void sourcesCoverMainAndResourcesSortedBytewiseButNotTests() throws IOException {
         write("main/b/B.java", "hello\n");
         write("main/a.java", "hello\n");

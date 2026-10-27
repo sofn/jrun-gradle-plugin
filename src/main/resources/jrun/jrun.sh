@@ -314,38 +314,65 @@ build_root() {
   printf '%s' "$ROOT_DIR"
 }
 
-inputs_manifest() {
-  local -a files=()
+# 本项目与构建根目录下现有的构建文件（用来发现 jrunInit 之后才新建的文件）
+inputs_candidates() {
   local f root d prefix=""
   for f in "${BUILD_FILES[@]}"; do
-    if [[ -f "$f" ]]; then files+=("$f"); fi
+    if [[ -f "$f" ]]; then printf '%s\n' "$f"; fi
   done
   root="$(build_root)"
   if [[ "$root" != "$ROOT_DIR" ]]; then
     d="$ROOT_DIR"
     while [[ "$d" != "$root" ]]; do d="$(dirname -- "$d")"; prefix="../$prefix"; done
     for f in "${BUILD_FILES[@]}"; do
-      if [[ -f "$prefix$f" ]]; then files+=("$prefix$f"); fi
+      if [[ -f "$prefix$f" ]]; then printf '%s\n' "$prefix$f"; fi
     done
   fi
-  if (( ${#files[@]} > 0 )); then sha256_files "${files[@]}"; fi
 }
 
+in_list() {
+  local x="$1" y
+  shift
+  for y in "$@"; do if [[ "$x" == "$y" ]]; then return 0; fi; done
+  return 1
+}
+
+# inputs.sha256 里登记的文件（含 project 依赖模块的构建文件）按原顺序重算哈希；
+# 文件被删除或出现了新的构建文件都算变化
+inputs_fresh() {
+  local manifest="$ARGS_DIR/inputs.sha256" f now
+  local -a listed=()
+  [[ -f "$manifest" ]] || return 1
+  while IFS= read -r f; do
+    if [[ -n "$f" ]]; then listed+=("${f:66}"); fi
+  done < "$manifest"
+  while IFS= read -r f; do
+    if [[ -n "$f" ]] && ! in_list "$f" ${listed[@]+"${listed[@]}"}; then return 1; fi
+  done < <(inputs_candidates)
+  if (( ${#listed[@]} == 0 )); then return 0; fi
+  now="$(sha256_files "${listed[@]}" 2>/dev/null)" || return 1
+  [[ "$now" == "$(cat -- "$manifest")" ]]
+}
+
+# main/、resources/，加上 jrunInit 在 source-roots 里登记的 project 依赖源码目录
 sources_manifest() {
-  local -a files=()
+  local -a files=() roots=(main resources)
   local f
+  if [[ -f "$ARGS_DIR/source-roots" ]]; then
+    while IFS= read -r f; do
+      if [[ -n "$f" ]]; then roots+=("$f"); fi
+    done < "$ARGS_DIR/source-roots"
+  fi
   while IFS= read -r f; do
     if [[ -n "$f" ]]; then files+=("$f"); fi
-  done < <(find main resources -type f 2>/dev/null | LC_ALL=C sort)
+  done < <(find "${roots[@]}" -type f 2>/dev/null | LC_ALL=C sort)
   if (( ${#files[@]} > 0 )); then sha256_files "${files[@]}"; fi
 }
 
 cache_fresh() {
   local now
-  [[ -f "$ARGS_DIR/source.args" && -f "$ARGS_DIR/class.args" ]] || return 1
-  [[ -f "$ARGS_DIR/inputs.sha256" && -f "$ARGS_DIR/sources.sha256" ]] || return 1
-  now="$(inputs_manifest)" || return 1
-  [[ "$now" == "$(cat -- "$ARGS_DIR/inputs.sha256")" ]] || return 1
+  [[ -f "$ARGS_DIR/source.args" && -f "$ARGS_DIR/class.args" && -f "$ARGS_DIR/sources.sha256" ]] || return 1
+  inputs_fresh || return 1
   now="$(sources_manifest)" || return 1
   [[ "$now" == "$(cat -- "$ARGS_DIR/sources.sha256")" ]]
 }

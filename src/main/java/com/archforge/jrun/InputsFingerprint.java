@@ -41,7 +41,17 @@ final class InputsFingerprint {
     }
 
     static String inputs(Path projectDir, Path rootDir) throws IOException {
+        return inputs(projectDir, rootDir, List.of());
+    }
+
+    static String sources(Path projectDir) throws IOException {
+        return sources(projectDir, List.of());
+    }
+
+    /** 项目目录、构建根目录，再加上 classpath 上其他模块（project 依赖）的目录。 */
+    static String inputs(Path projectDir, Path rootDir, List<Path> dependencyDirs) throws IOException {
         Set<Path> bases = new LinkedHashSet<>(List.of(projectDir.normalize(), rootDir.normalize()));
+        dependencyDirs.forEach(d -> bases.add(d.normalize()));
         List<String> files = new ArrayList<>();
         for (Path base : bases) {
             for (String name : BUILD_FILES) {
@@ -54,9 +64,12 @@ final class InputsFingerprint {
         return manifest(projectDir, files);
     }
 
-    static String sources(Path projectDir) throws IOException {
+    /** main/、resources/，再加上 project 依赖的源码目录（相对项目目录，启动器从 source-roots 读到同一份列表）。 */
+    static String sources(Path projectDir, List<String> dependencyRoots) throws IOException {
         List<String> files = new ArrayList<>();
-        for (String dir : SOURCE_DIRS) {
+        List<String> roots = new ArrayList<>(SOURCE_DIRS);
+        roots.addAll(dependencyRoots);
+        for (String dir : roots) {
             Path root = projectDir.resolve(dir);
             if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
                 continue;
@@ -78,7 +91,7 @@ final class InputsFingerprint {
         return out.toString();
     }
 
-    private static String relative(Path base, Path file) {
+    static String relative(Path base, Path file) {
         return base.normalize().relativize(file.normalize()).toString().replace(File.separatorChar, '/');
     }
 

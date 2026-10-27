@@ -163,8 +163,9 @@ public class JrunPlugin implements Plugin<Project> {
         return project.getTasks().register(INIT_TASK, task -> {
             task.setGroup(GROUP);
             task.setDescription("初始化 jrun：生成 java @argfile 与 scripts 元数据，供 ./jrun 使用");
-            // classpath 里含 build/classes/java/main，必须先编译
-            task.dependsOn("classes");
+            // classpath 里含本项目的 build/classes 和其他模块（project 依赖）的 jar，都要先构建出来
+            task.dependsOn(project.getExtensions().getByType(SourceSetContainer.class)
+                    .getByName(SourceSet.MAIN_SOURCE_SET_NAME).getRuntimeClasspath());
             task.doLast(t -> {
                 try {
                     RuntimeMetadataWriter.write(project, extension, scripts.get());

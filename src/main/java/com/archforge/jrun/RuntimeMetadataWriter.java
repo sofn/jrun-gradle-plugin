@@ -1,16 +1,25 @@
 package com.archforge.jrun;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.gradle.api.JavaVersion;
 import org.gradle.api.Project;
+import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier;
+import org.gradle.api.artifacts.result.ResolvedComponentResult;
+import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.SourceSetContainer;
@@ -51,12 +60,47 @@ final class RuntimeMetadataWriter {
         FileWrites.writeIfChanged(outDir.resolve("scripts.properties"), props.toString());
         writeScriptFiles(outDir.resolve("scripts"), scripts);
 
+        // 多模块：classpath 上其他模块（project 依赖）的构建文件和源码也是运行缓存的输入
+        Path projectDir = project.getProjectDir().toPath();
+        List<Path> dependencyDirs = new ArrayList<>();
+        List<String> dependencyRoots = new ArrayList<>();
+        for (Project dependency : projectDependencies(project)) {
+            dependencyDirs.add(dependency.getProjectDir().toPath());
+            SourceSetContainer sourceSets = dependency.getExtensions().findByType(SourceSetContainer.class);
+            SourceSet main = sourceSets == null ? null : sourceSets.findByName(SourceSet.MAIN_SOURCE_SET_NAME);
+            if (main != null) {
+                for (File dir : main.getAllSource().getSrcDirs()) {
+                    if (dir.isDirectory()) {
+                        dependencyRoots.add(InputsFingerprint.relative(projectDir, dir.toPath()));
+                    }
+                }
+            }
+        }
+        FileWrites.writeIfChanged(argsDir.resolve("source-roots"),
+                dependencyRoots.stream().map(r -> r + "\n").collect(Collectors.joining()));
+
         // 内容指纹：启动器据此判断缓存是否最新（替代 mtime 比较）。必须最后写：
         // 构建中途失败时不能留下"缓存是新的"这种假信号
-        Path projectDir = project.getProjectDir().toPath();
         FileWrites.writeIfChanged(argsDir.resolve("inputs.sha256"),
-                InputsFingerprint.inputs(projectDir, project.getRootDir().toPath()));
-        FileWrites.writeIfChanged(argsDir.resolve("sources.sha256"), InputsFingerprint.sources(projectDir));
+                InputsFingerprint.inputs(projectDir, project.getRootDir().toPath(), dependencyDirs));
+        FileWrites.writeIfChanged(argsDir.resolve("sources.sha256"),
+                InputsFingerprint.sources(projectDir, dependencyRoots));
+    }
+
+    /** runtimeClasspath 上同一构建里的其他项目（按路径排序，结果稳定）。 */
+    private static List<Project> projectDependencies(Project project) {
+        Configuration runtime = project.getConfigurations()
+                .getByName(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME);
+        Set<Project> dependencies = new TreeSet<>(Comparator.comparing(Project::getPath));
+        for (ResolvedComponentResult component : runtime.getIncoming().getResolutionResult().getAllComponents()) {
+            if (component.getId() instanceof ProjectComponentIdentifier id) {
+                Project dependency = project.getRootProject().findProject(id.getProjectPath());
+                if (dependency != null && dependency != project) {
+                    dependencies.add(dependency);
+                }
+            }
+        }
+        return List.copyOf(dependencies);
     }
 
     /**
