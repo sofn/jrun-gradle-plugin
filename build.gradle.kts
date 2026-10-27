@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins {
     `java-gradle-plugin`
     // 提供 Kotlin DSL 扩展函数（如 JavaExec.jrunMain(...)），
@@ -92,6 +94,41 @@ tasks.withType<Test>().configureEach {
     providers.gradleProperty("gradleCompatVersion").orNull?.let { version ->
         systemProperty("jrun.gradleCompatVersion", version)
     }
+}
+
+// GitHub Release 资产：全局启动器、安装脚本，以及 jrun init 用的 Gradle wrapper 模板
+val jrunDist = tasks.register<Sync>("jrunDist") {
+    group = "distribution"
+    description = "Assembles the GitHub release assets into build/dist"
+    val pluginVersion = project.version.toString()
+    inputs.property("version", pluginVersion)
+    into(layout.buildDirectory.dir("dist"))
+    from("src/main/resources/jrun") {
+        include("jrun.sh", "jrun.bat")
+        rename("jrun.sh", "jrun")
+        filter { line: String -> line.replace("@JRUN_VERSION@", pluginVersion) }
+    }
+    from("installer")
+    from("gradle/wrapper")
+    from(".") { include("gradlew", "gradlew.bat") }
+    doLast {
+        val dist = destinationDir
+        // CMD 的 goto/label 解析要求 CRLF（仓库里的模板是 LF）
+        val bat = dist.resolve("jrun.bat")
+        bat.writeText(bat.readText().replace("\r\n", "\n").replace("\n", "\r\n"))
+        val sha256 = { file: File ->
+            MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
+        }
+        dist.resolve("SHA256SUMS").writeText(
+            dist.listFiles()!!.filter { it.isFile && it.name != "SHA256SUMS" }.sortedBy { it.name }
+                .joinToString("") { "${sha256(it)}  ${it.name}\n" }
+        )
+    }
+}
+
+tasks.test {
+    dependsOn(jrunDist)
+    systemProperty("jrun.dist.dir", layout.buildDirectory.dir("dist").get().asFile.path)
 }
 
 gradlePlugin {
