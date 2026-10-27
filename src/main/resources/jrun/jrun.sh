@@ -13,6 +13,7 @@
 # Windows 下也可以用 jrun.bat (CMD) 或 jrun.ps1 (PowerShell)。
 
 set -euo pipefail
+JRUN_VERSION="@JRUN_VERSION@"
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"

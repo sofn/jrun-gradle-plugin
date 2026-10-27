@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "com.archforge.jrun"
-version = "0.1.0"
+version = "0.2.0"
 
 description = "Run Java like uv / cargo / npm scripts: flat src/test layout, generated launchers, named scripts."
 
@@ -21,6 +21,15 @@ repositories {
 java {
     // 用当前 JDK 编译，但产出 Java 17 字节码，让插件可运行在 Java 17+ 的 Gradle 上
     // （不强制 toolchain，避免要求本机必须安装某个特定 JDK）
+}
+
+// 插件版本写进资源文件：生成的 jrun 启动器、jrun --version、jrun init 都从这里读
+tasks.processResources {
+    val pluginVersion = project.version.toString()
+    inputs.property("version", pluginVersion)
+    filesMatching("jrun/version.properties") {
+        expand("version" to pluginVersion)
+    }
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -58,6 +67,7 @@ tasks.withType<Test>().configureEach {
     }
     // TestKit 会再起 Gradle 进程，堆内存放宽一点，避免 OOM 导致误报
     maxHeapSize = "1g"
+    systemProperty("jrun.expectedVersion", project.version.toString())
 
     // 可选：-PgradleCompatVersion=8.14.3 让 TestKit 用指定 Gradle 版本跑，
     // 用于兼容性矩阵（CI 的 gradle-compat 任务）。不传则用当前 Gradle。

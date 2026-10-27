@@ -554,6 +554,7 @@ public class JrunPlugin implements Plugin<Project> {
                                boolean crlf, boolean bom, boolean executable) throws IOException {
         String content = readResource("/jrun/" + resourceName);
         content = content.replace("\r\n", "\n");
+        content = content.replace("@JRUN_VERSION@", JrunVersion.get());
 
         // .bat 必须保持纯 ASCII：Windows 控制台默认代码页常常是 GBK/CP936，
         // UTF-8 中文会乱码，甚至破坏命令解析。这里做一道运行期防护。

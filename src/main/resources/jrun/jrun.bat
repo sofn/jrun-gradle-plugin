@@ -15,6 +15,7 @@ rem  Keep it ASCII-only: the console code page may be GBK/CP936.
 rem  Requires CRLF line endings (the plugin writes them).
 rem ===========================================================================
 setlocal EnableExtensions EnableDelayedExpansion
+set "JRUN_VERSION=@JRUN_VERSION@"
 
 cd /d "%~dp0"
 set "OUT_DIR=build\jrun"

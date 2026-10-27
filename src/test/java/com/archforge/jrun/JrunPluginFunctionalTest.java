@@ -641,4 +641,21 @@ class JrunPluginFunctionalTest extends AbstractJrunTest {
         assertFalse(exists(".run/jrun - dev.run.xml"),
                 "disabling generateIntellijRuns must remove previously generated run configurations");
     }
+
+    /** 启动器里的 @JRUN_VERSION@ 占位符必须被替换成插件版本（jrun --version、jrun init 都要用）。 */
+    @Test
+    void launchersCarryThePluginVersion() {
+        settings("version");
+        minimalBuild();
+
+        runner("help").build();
+
+        String version = JrunVersion.get();
+        String sh = read("jrun");
+        String bat = read("jrun.bat");
+        assertFalse(sh.contains("@JRUN_VERSION@"), "placeholder must be replaced in jrun");
+        assertFalse(bat.contains("@JRUN_VERSION@"), "placeholder must be replaced in jrun.bat");
+        assertTrue(sh.contains("JRUN_VERSION=\"" + version + "\""), "jrun should carry the plugin version");
+        assertTrue(bat.contains("set \"JRUN_VERSION=" + version + "\""), "jrun.bat should carry the plugin version");
+    }
 }
