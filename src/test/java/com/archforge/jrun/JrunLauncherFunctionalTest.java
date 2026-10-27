@@ -14,6 +14,8 @@ import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -173,5 +175,55 @@ class JrunLauncherFunctionalTest extends AbstractJrunTest {
         ProcessResult r = runBash(projectDir.resolve("jrun"), projectDir.resolve("tools"), Map.of(), "Tool.java");
         assertEquals(0, r.exitCode(), r.output());
         assertTrue(r.output().contains("TOOL"), r.output());
+    }
+
+    @Test
+    void namedScriptsPassArrayArgumentsIntact() {
+        helloProject("""
+                jrun {
+                    script('greet', 'Hello') { args '--greeting=hello world', 'say "hi"' }
+                }
+                """);
+
+        ProcessResult r = jrun("greet", "extra arg");
+        assertEquals(0, r.exitCode(), r.output());
+        assertTrue(r.output().contains("ARG=[--greeting=hello world]\nARG=[say \"hi\"]\nARG=[extra arg]"),
+                "fixed and user arguments must arrive unsplit and in order:\n" + r.output());
+    }
+
+    @Test
+    void shellScriptsRunInTheProjectRootWithPositionalArguments() throws IOException {
+        helloProject("""
+                jrun {
+                    script('where', 'shell:echo "PWD=$(pwd)"; echo "ARG1=$1"')
+                }
+                """);
+
+        ProcessResult r = runBash(projectDir.resolve("jrun"), projectDir.resolve("main"), Map.of(), "where", "foo");
+        assertTrue(r.output().contains("PWD=" + projectDir.toRealPath()), r.output());
+        assertTrue(r.output().contains("ARG1=foo"), r.output());
+    }
+
+    @Test
+    void dependsOnRunsInOrderAndStopsAtTheFirstFailure() {
+        helloProject("""
+                jrun {
+                    script('first', 'shell:echo FIRST')
+                    script('second', 'shell:echo SECOND')
+                    script('all', 'Hello') { dependsOn 'first', 'second' }
+                    script('broken', 'shell:exit 3')
+                    script('guarded', 'shell:echo NEVER') { dependsOn 'broken' }
+                }
+                """);
+
+        String out = jrun("all").output();
+        int first = out.indexOf("FIRST");
+        assertTrue(first >= 0 && first < out.indexOf("SECOND") && out.indexOf("SECOND") < out.indexOf("HELLO"),
+                "dependencies run in declaration order before the script:\n" + out);
+
+        ProcessResult guarded = jrun("guarded");
+        assertNotEquals(0, guarded.exitCode(), guarded.output());
+        assertFalse(guarded.output().contains("NEVER"), "a failed dependency must stop the chain:\n" + guarded.output());
+        assertTrue(guarded.output().contains("broken"), "the failing dependency should be named:\n" + guarded.output());
     }
 }

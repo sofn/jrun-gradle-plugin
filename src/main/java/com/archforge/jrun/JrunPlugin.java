@@ -2,12 +2,18 @@ package com.archforge.jrun;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.file.FileCollection;
+import org.gradle.api.tasks.Exec;
 import org.gradle.api.tasks.JavaExec;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.SourceSetContainer;
@@ -24,6 +30,8 @@ import org.gradle.util.GradleVersion;
 public class JrunPlugin implements Plugin<Project> {
 
     public static final String INIT_TASK = "jrunInit";
+    static final String ADD_TASK = "jrunAdd";
+    static final String RESOLVE_TASK = "jrunResolve";
     static final String GROUP = "jrun";
 
     @Override
@@ -39,15 +47,23 @@ public class JrunPlugin implements Plugin<Project> {
         extension.getTaskPrefix().convention(GROUP);
 
         FlatLayoutConfigurer.configure(project);
-        TaskProvider<Task> initTask = registerInitTask(project, extension);
+        // 配置阶段解析出的 scripts，jrunInit 执行时据此写运行时元数据
+        AtomicReference<List<ScriptResolver.ResolvedScript>> resolvedScripts = new AtomicReference<>(List.of());
+        TaskProvider<Task> initTask = registerInitTask(project, extension, resolvedScripts);
         hookStandardTasks(project, initTask);
 
         // kotlin / groovy 的 sourceSet 扩展只有在它们自己被应用后才存在，所以放到 afterEvaluate
         project.afterEvaluate(p -> {
             FlatLayoutConfigurer.configureJvmLanguageSources(p);
+            Map<String, ScriptResolver.Spec> specs = new TreeMap<>();
+            for (JrunScript s : extension.getScriptDefinitions()) {
+                specs.put(s.getName(), new ScriptResolver.Spec(s.getTarget().get(), s.getArgs().get(),
+                        s.getDependsOn().get()));
+            }
             List<ScriptResolver.ResolvedScript> scripts =
                     new ScriptResolver(p.getProjectDir().toPath(), extension.getTaskPrefix().getOrElse(GROUP))
-                            .resolve(extension.getScripts().get());
+                            .resolve(extension.getScripts().get(), specs);
+            resolvedScripts.set(scripts);
             registerScriptTasks(p, scripts);
             try {
                 LauncherGenerator.generate(p, extension);
@@ -59,7 +75,7 @@ public class JrunPlugin implements Plugin<Project> {
     }
 
     /**
-     * 为每个可运行 script 注册 JavaExec 任务（{@code jrunHello} 之类）。
+     * 为 script 注册 Gradle 任务（{@code jrunHello} 之类）：Java 目标用 JavaExec，{@code shell:} 用 Exec。
      *
      * <p>IntelliJ 的 Application 运行配置依赖 module classpath，IDE 没同步 Gradle 依赖时会
      * {@code NoClassDefFoundError}；Gradle 任务用 {@code sourceSets.main.runtimeClasspath}，与 IDE 状态无关。
@@ -67,19 +83,60 @@ public class JrunPlugin implements Plugin<Project> {
     private void registerScriptTasks(Project project, List<ScriptResolver.ResolvedScript> scripts) {
         FileCollection runtimeClasspath = project.getExtensions().getByType(SourceSetContainer.class)
                 .getByName(SourceSet.MAIN_SOURCE_SET_NAME).getRuntimeClasspath();
+        Map<String, ScriptResolver.ResolvedScript> byName = new HashMap<>();
+        scripts.forEach(s -> byName.put(s.name(), s));
+
         for (ScriptResolver.ResolvedScript script : scripts) {
-            project.getTasks().register(script.taskName(), JavaExec.class, task -> {
-                task.setGroup(GROUP);
-                task.setDescription("Run jrun script '" + script.name() + "' (" + script.mainClass() + ")");
-                task.dependsOn("classes");
-                task.setClasspath(runtimeClasspath);
-                task.getMainClass().set(script.mainClass());
-                task.setArgs(script.args());
-            });
+            if (!script.hasTask()) {
+                continue;
+            }
+            // dependsOn 映射成任务依赖：有任务的 script 依赖其任务，gradle: 型依赖它指向的任务
+            List<String> deps = new ArrayList<>();
+            for (String dep : script.dependsOn()) {
+                ScriptResolver.ResolvedScript d = byName.get(dep);
+                if (d.hasTask()) {
+                    deps.add(d.taskName());
+                } else if (d.kind() == ScriptResolver.Kind.GRADLE) {
+                    deps.add(d.target().split("\\s+")[0]);
+                }
+            }
+            if (script.kind() == ScriptResolver.Kind.SHELL) {
+                project.getTasks().register(script.taskName(), Exec.class, task -> {
+                    task.setGroup(GROUP);
+                    task.setDescription("Run jrun script '" + script.name() + "' (shell: " + script.target() + ")");
+                    task.setWorkingDir(project.getProjectDir());
+                    task.setCommandLine("win".equals(RuntimeMetadataWriter.platformDir())
+                            ? List.of("cmd", "/d", "/c", script.target())
+                            : List.of("sh", "-c", script.target()));
+                    task.dependsOn(deps);
+                });
+            } else {
+                project.getTasks().register(script.taskName(), JavaExec.class, task -> {
+                    task.setGroup(GROUP);
+                    task.setDescription("Run jrun script '" + script.name() + "' (" + script.mainClass() + ")");
+                    task.dependsOn("classes");
+                    task.dependsOn(deps);
+                    task.setClasspath(runtimeClasspath);
+                    task.getMainClass().set(script.mainClass());
+                    task.setArgs(script.args());
+                });
+            }
+        }
+        // 同一个 script 的多个依赖按声明顺序执行（只约束插件自己注册的任务）
+        for (ScriptResolver.ResolvedScript script : scripts) {
+            List<String> own = script.dependsOn().stream().map(byName::get)
+                    .filter(ScriptResolver.ResolvedScript::hasTask)
+                    .map(ScriptResolver.ResolvedScript::taskName)
+                    .toList();
+            for (int i = 1; i < own.size(); i++) {
+                String previous = own.get(i - 1);
+                project.getTasks().named(own.get(i)).configure(t -> t.mustRunAfter(previous));
+            }
         }
     }
 
-    private TaskProvider<Task> registerInitTask(Project project, JrunExtension extension) {
+    private TaskProvider<Task> registerInitTask(Project project, JrunExtension extension,
+                                                AtomicReference<List<ScriptResolver.ResolvedScript>> scripts) {
         return project.getTasks().register(INIT_TASK, task -> {
             task.setGroup(GROUP);
             task.setDescription("初始化 jrun：生成 java @argfile 与 scripts 元数据，供 ./jrun 使用");
@@ -87,7 +144,7 @@ public class JrunPlugin implements Plugin<Project> {
             task.dependsOn("classes");
             task.doLast(t -> {
                 try {
-                    RuntimeMetadataWriter.write(project, extension);
+                    RuntimeMetadataWriter.write(project, extension, scripts.get());
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }

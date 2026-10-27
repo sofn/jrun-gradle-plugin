@@ -32,3 +32,12 @@ fun Project.script(name: String, target: String) {
     val extension = extensions.getByType(JrunExtension::class.java)
     extension.scripts.put(name, target)
 }
+
+/**
+ * 顶层块写法：`script("api", "com.example.App") { args("hello world"); dependsOn("gen") }`。
+ */
+fun Project.script(name: String, target: String, configure: JrunScript.() -> Unit) {
+    val script = extensions.getByType(JrunExtension::class.java).scriptDefinitions.maybeCreate(name)
+    script.target.set(target)
+    script.configure()
+}

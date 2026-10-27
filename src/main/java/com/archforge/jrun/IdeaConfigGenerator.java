@@ -34,6 +34,9 @@ final class IdeaConfigGenerator {
         }
         Set<String> keep = new HashSet<>();
         for (ScriptResolver.ResolvedScript script : scripts) {
+            if (!script.hasTask()) {
+                continue;
+            }
             String fileName = PREFIX + script.name() + SUFFIX;
             keep.add(fileName);
             FileWrites.writeIfChanged(runDir.resolve(fileName),

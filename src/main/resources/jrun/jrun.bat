@@ -27,7 +27,6 @@ if not exist "%GRADLEW%" set "GRADLEW=gradle"
 set "ARG_SOURCE=%CD%\%ARGS_DIR%\source.args"
 set "ARG_CLASS=%CD%\%ARGS_DIR%\class.args"
 set "FORCE_REBUILD=0"
-set "FIXED_ARGS="
 
 rem ---------------------------------------------------------------------------
 rem  Parse arguments
@@ -138,52 +137,95 @@ if not exist "%ARGS_DIR%\source.args" (
 
 :after_prepare
 rem ---------------------------------------------------------------------------
-rem  Named scripts: value may be gradle:task, Xxx.java or a.b.C (+ fixed args)
+rem  Named scripts: build\jrun\scripts\<name>.properties (kind/target/deps) and
+rem  <name>.args (fixed Java arguments, already quoted for an @argfile)
 rem ---------------------------------------------------------------------------
-set "CMDLINE="
-if exist "%OUT_DIR%\scripts.properties" (
-    for /f "usebackq tokens=1,* delims==" %%A in ("%OUT_DIR%\scripts.properties") do (
-        if /i "%%A"=="!TARGET!" set "CMDLINE=%%B"
-    )
+set "SCRIPTS_DIR=%OUT_DIR%\scripts"
+set "IS_SCRIPT=0"
+if exist "%SCRIPTS_DIR%\!TARGET!.properties" (
+    echo !TARGET!| findstr /r /x "[A-Za-z0-9][A-Za-z0-9._-]*" >nul && set "IS_SCRIPT=1"
 )
-if defined CMDLINE (
-    if /i "!CMDLINE:~0,7!"=="gradle:" (
-        call "%GRADLEW%" "!CMDLINE:~7!" !APP_ARGS!
-        exit /b !ERRORLEVEL!
-    )
-    for /f "tokens=1,*" %%X in ("!CMDLINE!") do (
-        set "TARGET=%%X"
-        set "FIXED_ARGS=%%Y"
-    )
-)
-
-set "FINAL_ARGS=!FIXED_ARGS! !APP_ARGS!"
-
-rem ---------------------------------------------------------------------------
-rem  Execute
-rem    Java      -> single-file source mode (no .class produced)
-rem    others    -> no such mode; compile first, then launch by class name
-rem ---------------------------------------------------------------------------
-set "EXT="
-for %%F in ("!TARGET!") do set "EXT=%%~xF"
-
-if /i "!EXT!"==".java" (
-    call :locate_source "!TARGET!"
-    if not exist "!TARGET!" (
-        echo Source file not found: !TARGET! 1>&2
-        exit /b 1
-    )
-    call :strip_shebang
-    "!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!ARG_SOURCE!" "!TARGET!" !FINAL_ARGS!
+if "!IS_SCRIPT!"=="1" (
+    call :run_script "!TARGET!" final
     exit /b !ERRORLEVEL!
 )
 
-if /i "!EXT!"==".kt" goto jvm_source
-if /i "!EXT!"==".groovy" goto jvm_source
-if /i "!EXT!"==".scala" goto jvm_source
-goto class_mode
+rem ---------------------------------------------------------------------------
+rem  Execute a direct target
+rem    Java      -> single-file source mode (no .class produced)
+rem    others    -> no such mode; compile first, then launch by class name
+rem ---------------------------------------------------------------------------
+set "FIXED_FILE="
+set "RS_NAME="
+set "FINAL_ARGS=!APP_ARGS!"
+call :run_java_target
+exit /b !ERRORLEVEL!
 
-:jvm_source
+rem ===========================================================================
+rem  Subroutines
+rem ===========================================================================
+:run_script
+rem %1 = script name, %2 = "final" for the script the user asked for (gets APP_ARGS)
+setlocal
+set "RS_NAME=%~1"
+set "RS_KIND="
+set "RS_TARGET="
+set "RS_DEPS="
+for /f "usebackq tokens=1,* delims==" %%A in ("%SCRIPTS_DIR%\%~1.properties") do (
+    if "%%A"=="kind" set "RS_KIND=%%B"
+    if "%%A"=="target" set "RS_TARGET=%%B"
+    if "%%A"=="deps" set "RS_DEPS=%%B"
+)
+for %%D in (!RS_DEPS!) do (
+    call :run_script "%%D" dep
+    if errorlevel 1 (
+        echo jrun: script '%%D' ^(dependency of '!RS_NAME!'^) failed 1>&2
+        endlocal & exit /b 1
+    )
+)
+set "FINAL_ARGS="
+if /i "%~2"=="final" set "FINAL_ARGS=!APP_ARGS!"
+if /i "!RS_KIND!"=="gradle" goto rs_gradle
+if /i "!RS_KIND!"=="shell" goto rs_shell
+set "TARGET=!RS_TARGET!"
+set "FIXED_FILE=%CD%\%SCRIPTS_DIR%\!RS_NAME!.args"
+call :run_java_target
+goto rs_done
+:rs_gradle
+call "%GRADLEW%" !RS_TARGET! !FINAL_ARGS!
+goto rs_done
+:rs_shell
+cmd /d /c "!RS_TARGET! !FINAL_ARGS!"
+goto rs_done
+:rs_done
+set "RC=!ERRORLEVEL!"
+endlocal & exit /b %RC%
+
+:run_java_target
+rem Uses TARGET, FIXED_FILE (fixed-args file or empty), RS_NAME and FINAL_ARGS
+set "EXT="
+for %%F in ("!TARGET!") do set "EXT=%%~xF"
+if /i "!EXT!"==".java" goto rjt_source
+if /i "!EXT!"==".kt" goto rjt_jvm
+if /i "!EXT!"==".groovy" goto rjt_jvm
+if /i "!EXT!"==".scala" goto rjt_jvm
+rem Keep build/classes in sync with the sources (incremental, usually fast)
+call "%GRADLEW%" --quiet --console=plain classes
+if errorlevel 1 exit /b 1
+set "PROGRAM=!TARGET!"
+set "RUNTIME=!ARG_CLASS!"
+goto rjt_launch
+:rjt_source
+call :locate_source "!TARGET!"
+if not exist "!TARGET!" (
+    echo Source file not found: !TARGET! 1>&2
+    exit /b 1
+)
+call :strip_shebang
+set "PROGRAM=!TARGET!"
+set "RUNTIME=!ARG_SOURCE!"
+goto rjt_launch
+:rjt_jvm
 call :locate_source "!TARGET!"
 if not exist "!TARGET!" (
     echo Source file not found: !TARGET! 1>&2
@@ -192,19 +234,22 @@ if not exist "!TARGET!" (
 call :derive_jvm_main "!TARGET!"
 call "%GRADLEW%" --quiet --console=plain classes
 if errorlevel 1 exit /b 1
-"!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!ARG_CLASS!" "!MAIN_CLASS!" !FINAL_ARGS!
+set "PROGRAM=!MAIN_CLASS!"
+set "RUNTIME=!ARG_CLASS!"
+:rjt_launch
+if defined FIXED_FILE if exist "!FIXED_FILE!" for %%S in ("!FIXED_FILE!") do if %%~zS GTR 0 goto rjt_argfile
+"!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!RUNTIME!" "!PROGRAM!" !FINAL_ARGS!
+exit /b !ERRORLEVEL!
+:rjt_argfile
+rem Main class / source + fixed arguments go into one @argfile: no CMD word splitting
+if not exist "%ARGS_DIR%\run" mkdir "%ARGS_DIR%\run"
+set "RUN_FILE=%CD%\%ARGS_DIR%\run\!RS_NAME!.args"
+set "QUOTED=!PROGRAM:\=\\!"
+> "!RUN_FILE!" echo "!QUOTED!"
+type "!FIXED_FILE!" >> "!RUN_FILE!"
+"!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!RUNTIME!" "@!RUN_FILE!" !FINAL_ARGS!
 exit /b !ERRORLEVEL!
 
-:class_mode
-rem Keep build/classes in sync with the sources (incremental, usually fast)
-call "%GRADLEW%" --quiet --console=plain classes
-if errorlevel 1 exit /b 1
-"!JAVA_BIN!" %JAVA_OPTS% %JRUN_OPTS% "@!ARG_CLASS!" "!TARGET!" !FINAL_ARGS!
-exit /b !ERRORLEVEL!
-
-rem ===========================================================================
-rem  Subroutines
-rem ===========================================================================
 :inputs_fresh
 rem Re-hash every build input listed by jrunInit (inputs.sha256, sha256sum format).
 rem Any changed or missing file means the argfiles may be stale. Sources are kept

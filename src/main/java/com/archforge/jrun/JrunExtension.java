@@ -1,5 +1,7 @@
 package com.archforge.jrun;
 
+import org.gradle.api.Action;
+import org.gradle.api.NamedDomainObjectContainer;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
@@ -12,27 +14,27 @@ import org.gradle.api.provider.Property;
  *     // 可选：./jrun 不带参数时默认运行的主类
  *     mainClass = "com.example.demo.HelloApplication"
  *
- *     // 类似 package.json 的 scripts：./jrun dev 即执行对应命令
+ *     // 类似 package.json 的 scripts：./jrun dev 即执行对应命令（字符串按空格拆参数）
  *     scripts.put("dev", "com.example.demo.HelloApplication")
  *     scripts.put("hello", "Hello.java")
- *     scripts.put("api", "com.example.demo.HelloApplication --server.port=8080")
  *     scripts.put("verify", "gradle:build")
  *
- *     // 可选：只生成需要的启动器（默认 bash + cmd + powershell 全生成）
- *     launchers = listOf("bash", "cmd")
- *
- *     // 可选：不生成 jrun.json（它只是 scripts 的可读总览，运行时不依赖）
- *     generateJson = false
+ *     // 块写法：数组参数（可含空格）、依赖其他 script
+ *     script("api", "com.example.demo.HelloApplication") {
+ *         args("--server.port=8080", "--greeting=hello world")
+ *         dependsOn("codegen")
+ *     }
+ *     script("codegen", "shell:./tools/gen.sh")
  * }
  * </pre>
  *
- * 命令取值支持三种形式：
+ * 目标取值支持四种形式：
  * <ul>
  *   <li>{@code Xxx.java} —— 单文件源码模式</li>
  *   <li>{@code a.b.C} —— classpath 模式（Spring Boot 应用用这种）</li>
  *   <li>{@code gradle:taskName} —— 调用某个 Gradle 任务</li>
+ *   <li>{@code shell:命令} —— 在项目根目录用 sh（Windows 上是 cmd）执行一条命令</li>
  * </ul>
- * 值里可以追加固定参数（空格分隔）。
  */
 public abstract class JrunExtension {
 
@@ -53,6 +55,23 @@ public abstract class JrunExtension {
      */
     public void script(String name, String target) {
         getScripts().put(name, target);
+    }
+
+    /** 块写法声明的 script（{@link #script(String, String, Action)}）。 */
+    public abstract NamedDomainObjectContainer<JrunScript> getScriptDefinitions();
+
+    /**
+     * 块写法：支持数组参数与依赖。
+     * <pre>
+     * jrun {
+     *     script("api", "com.example.App") { args("--greeting=hello world"); dependsOn("codegen") }
+     * }
+     * </pre>
+     */
+    public void script(String name, String target, Action<? super JrunScript> configure) {
+        JrunScript script = getScriptDefinitions().maybeCreate(name);
+        script.getTarget().set(target);
+        configure.execute(script);
     }
 
     /** ./jrun 无参数时的默认主类（可选）。 */

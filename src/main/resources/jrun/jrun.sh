@@ -92,7 +92,6 @@ export JAVA_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
 # JAVA_OPTS 在前、JRUN_OPTS 在后：同名 JVM 参数以后者为准。按空白拆分，不做通配符展开
 JVM_OPTS=()
 read -r -a JVM_OPTS <<< "${JAVA_OPTS:-} ${JRUN_OPTS:-}"
-run_java() { exec "$JAVA_BIN" ${JVM_OPTS[@]+"${JVM_OPTS[@]}"} "$@"; }
 
 # ---------------------------------------------------------------------------
 # 运行缓存是否最新：重新计算 jrunInit 写下的内容哈希清单并逐字比较（不看 mtime）
@@ -198,26 +197,6 @@ case "$TARGET" in
   init|prepare) gradle_run jrunInit "$@"; exit $? ;;
 esac
 
-# 命名 scripts：值可以是 gradle:task、Xxx.java、a.b.C，可带固定参数
-if [[ -f "$OUT_DIR/scripts.properties" ]]; then
-  CMD="$(awk -F= -v k="$TARGET" '$1==k{sub(/^[^=]*=/,""); print; exit}' \
-        "$OUT_DIR/scripts.properties" 2>/dev/null || true)"
-  if [[ -n "$CMD" ]]; then
-    read -r -a PARTS <<< "$CMD"
-    if [[ "${PARTS[0]}" == gradle:* ]]; then
-      TASK="${PARTS[0]#gradle:}"
-      EXTRA=("${PARTS[@]:1}")
-      # 注意：不能写 ${ARR[@]:1:+"${ARR[@]:1}"} —— bash 会把 "1:+" 当成算术切片并报错
-      gradle_run "$TASK" ${EXTRA[@]+"${EXTRA[@]}"} "$@"
-      exit $?
-    fi
-    TARGET="${PARTS[0]}"
-    if (( ${#PARTS[@]} > 1 )); then
-      set -- "${PARTS[@]:1}" "$@"
-    fi
-  fi
-fi
-
 # ---------------------------------------------------------------------------
 # 执行：所有 classpath / --source 细节都在 argfile 里，脚本无需拼接
 # ---------------------------------------------------------------------------
@@ -274,18 +253,91 @@ without_shebang() {
   printf '%s' "$copy"
 }
 
-case "$TARGET" in
-  *.java)
-    LOCATED="$(locate_source "$TARGET")" || { echo "找不到源文件: $TARGET" >&2; exit 1; }
-    # Java 单文件源码模式：即写即跑，不产生 .class
-    run_java "@$ROOT_DIR/$ARGS_DIR/source.args" "$(without_shebang "$LOCATED")" "$@"
-    ;;
-  *.kt|*.groovy|*.scala)
-    # 非 Java 语言没有单文件源码模式，先编译再按类名启动
-    LOCATED="$(locate_source "$TARGET")" || { echo "找不到源文件: $TARGET" >&2; exit 1; }
-    run_java "@$ROOT_DIR/$ARGS_DIR/class.args" "$(derive_jvm_main "$LOCATED")" "$@"
-    ;;
-  *)
-    run_java "@$ROOT_DIR/$ARGS_DIR/class.args" "$TARGET" "$@"
-    ;;
-esac
+# argfile 引用规则（与插件的 ArgFiles.quote 一致）
+argfile_quote() {
+  local s="${1//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '"%s"\n' "$s"
+}
+
+# launch <exec|call> <@运行时argfile> <主类或源文件> <固定参数文件|""> [用户参数...]
+#   有固定参数时，把“主类/源文件 + 固定参数”写进 run/<name>.args，交给 java 自己解析（不经 shell 分词）
+launch() {
+  local mode="$1" runtime="$2" program="$3" fixed="$4" run_file
+  shift 4
+  local -a cmd=("$JAVA_BIN" ${JVM_OPTS[@]+"${JVM_OPTS[@]}"} "$runtime")
+  if [[ -n "$fixed" && -s "$fixed" ]]; then
+    mkdir -p -- "$ARGS_DIR/run"
+    run_file="$ARGS_DIR/run/$(basename -- "$fixed")"
+    { argfile_quote "$program"; cat -- "$fixed"; } > "$run_file"
+    cmd+=("@$ROOT_DIR/$run_file")
+  else
+    cmd+=("$program")
+  fi
+  if [[ "$mode" == "exec" ]]; then exec "${cmd[@]}" "$@"; fi
+  "${cmd[@]}" "$@"
+}
+
+# run_target <exec|call> <目标> <固定参数文件|""> [用户参数...]
+run_target() {
+  local mode="$1" target="$2" fixed="$3" located
+  shift 3
+  case "$target" in
+    *.java)
+      # Java 单文件源码模式：即写即跑，不产生 .class
+      located="$(locate_source "$target")" || { echo "找不到源文件: $target" >&2; return 1; }
+      launch "$mode" "@$ROOT_DIR/$ARGS_DIR/source.args" "$(without_shebang "$located")" "$fixed" "$@"
+      ;;
+    *.kt|*.groovy|*.scala)
+      # 非 Java 语言没有单文件源码模式，先编译再按类名启动
+      located="$(locate_source "$target")" || { echo "找不到源文件: $target" >&2; return 1; }
+      launch "$mode" "@$ROOT_DIR/$ARGS_DIR/class.args" "$(derive_jvm_main "$located")" "$fixed" "$@"
+      ;;
+    *)
+      launch "$mode" "@$ROOT_DIR/$ARGS_DIR/class.args" "$target" "$fixed" "$@"
+      ;;
+  esac
+}
+
+# 命名 script 的元数据由 jrunInit 写在 build/jrun/scripts/<name>.properties（kind/target/deps）
+# 与 <name>.args（Java 目标的固定参数，已按 argfile 规则加引号）
+NAME_PATTERN='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+SCRIPTS_DIR="$OUT_DIR/scripts"
+
+meta_get() { sed -n "s/^$2=//p" "$1" | head -1; }
+
+# run_script <exec|call> <名字> [用户参数...]：先按声明顺序执行 dependsOn（失败即停），再执行自身
+run_script() {
+  local mode="$1" name="$2" meta kind target deps dep
+  shift 2
+  meta="$SCRIPTS_DIR/$name.properties"
+  kind="$(meta_get "$meta" kind)"
+  target="$(meta_get "$meta" target)"
+  deps="$(meta_get "$meta" deps)"
+  for dep in $deps; do
+    if ! run_script call "$dep"; then
+      echo "jrun: script '$dep'（'$name' 的前置依赖）执行失败" >&2
+      exit 1
+    fi
+  done
+  case "$kind" in
+    gradle)
+      local -a task=()
+      read -r -a task <<< "$target"
+      if [[ "$mode" == "exec" ]]; then gradle_run "${task[@]}" "$@"; exit $?; fi
+      gradle_run "${task[@]}" "$@"
+      ;;
+    shell)
+      if [[ "$mode" == "exec" ]]; then exec sh -c "$target" "$name" "$@"; fi
+      sh -c "$target" "$name" "$@"
+      ;;
+    *)
+      run_target "$mode" "$target" "$SCRIPTS_DIR/$name.args" "$@"
+      ;;
+  esac
+}
+
+if [[ "$TARGET" =~ $NAME_PATTERN && -f "$SCRIPTS_DIR/$TARGET.properties" ]]; then
+  run_script exec "$TARGET" "$@"
+fi
+run_target exec "$TARGET" "" "$@"
