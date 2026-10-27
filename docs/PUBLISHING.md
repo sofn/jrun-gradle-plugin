@@ -1,58 +1,40 @@
 # 发布到 Gradle Plugin Portal
 
-本文分三部分：**现有测试覆盖**、**仍建议补充的测试**、**发布前的检查清单**。
+本文分四部分：**现有测试覆盖**、**仍建议补充的测试**、**发布前的检查清单**、**发布 GitHub Release**。
 
 ---
 
-## 一、现有测试覆盖（28 个用例，已全绿）
+## 一、现有测试覆盖（89 个用例，其中 6 个只在 Windows 上运行）
 
-`./gradlew test` ≈ 1 分钟（TestKit 每个用例起一次真实 Gradle）。
+`./gradlew test` 热缓存下约 40 秒。TestKit 使用持久化目录 `~/.gradle/jrun-testkit`，
+`clean` 之后不再重新下载插件（本地实测：`clean test` 从 6 分 41 秒降到 44 秒）。
 
-### 插件行为（`JrunPluginFunctionalTest`，21 个）
-
-| 用例 | 守的是什么 |
-| --- | --- |
-| `wrapperTaskAlsoRunsJrunInit` | `gradle wrapper` 结束后 `jrunInit` 自动执行，缓存就绪 |
-| `flatLayoutIsApplied` | `main`/`test` 成为 source root，`resources` 同理 |
-| `defaultLaunchersAreBashAndCmdOnly` | 默认只生成 `jrun` + `jrun.bat`，**永不生成 `jrun.ps1`**（Windows 单入口） |
-| `powershellLauncherIsGoneAndIgnoredWithWarning` | 配置里写 `powershell` 只告警不生成；历史遗留的 `jrun.ps1` 会被清理 |
-| `launchersCanBeNarrowedToBashOnly` | 收窄 `launchers` 后，被移除平台的**文件会被删除** |
-| `launchersAreGeneratedWithCorrectEncodings` | 两份脚本；bash=LF 无 BOM，bat=**CRLF + 纯 ASCII** |
-| `launcherGenerationIsIdempotent` | 内容不变就不重写（否则会破坏构建缓存 / 触发无谓重编译） |
-| `prepareWritesArgfilesWithEscapedClasspath` | argfile 结构、classpath 加引号、Windows `\` 转义成 `\\`、`--source` ≥ 17 |
-| `scriptsAndDefaultTargetAreWritten` | `scripts.properties` 按 key 排序且保留固定参数；`default-target.txt` |
-| `scriptTasksRunWithGradleClasspath` | 生成的 Gradle 任务用 Gradle classpath 真实运行 script，固定参数传入 |
-| `scriptTasksCoverSimpleClassNames` | `Hello.java` 与默认包类名 `Hello` 都能生成任务并运行；`gradle:` 型不生成 |
-| `mavenCentralIsAddedWhenNoRepositoryDeclared` | 项目没配仓库时自动补 `mavenCentral()` |
-| `intellijRunsAreGeneratedForClasspathScriptsOnly` | 只为 classpath 型 script 生成 `.run/*.run.xml`；参数进 `PROGRAM_PARAMETERS`；关闭后清理 |
-| `specialCharactersAreEscapedInIntellijRuns` | script 值里的 `&` / `"` 在 XML 中正确转义 |
-| `groovySourceSetExcludesJavaFiles` | **回归**：groovy 源集必须 `exclude **/*.java`，否则 jar 报 duplicate entry |
-| `kotlinPluginFlattensKotlinSources` | Kotlin 源集扁平化到 `main`/`test`，且与 java 源集共存 |
-| `springBootPluginCoexists` | 与 Spring Boot 插件同时应用不破坏配置模型 |
-| `kotlinDslConfigurationWorks` | KTS 下 `jrun { scripts.put(...) }` 语法可用 |
-| `emptyProjectStillPreparesArgfiles` | 无 `main/` 的空项目也能生成 argfile |
-| `specialCharactersInScriptsAreEscapedInJson` | 脚本值里的引号/反斜杠在 JSON 中正确转义 |
-
-### 脚本端到端（`JrunScriptFunctionalTest`，4 个）
-
-真实执行项目根生成的 `jrun`（bash）。
-
-| 用例 | 守的是什么 |
-| --- | --- |
-| `runsSingleJavaFile` | 单文件源码模式能跑，无参数时 `ARGC=0` |
-| `passesArgumentsThrough` | 位置参数原样透传 |
-| `namedScriptKeepsFixedArguments` | **回归**：命名 script 的固定参数不丢、含 `=` 的参数不被拆开 |
-| `missingSourceFailsWithClearMessage` | 找不到源文件时非 0 退出 + 可读错误 |
+| 测试类 | 类型 | 守的是什么 |
+| --- | --- | --- |
+| `ScriptResolverTest`（11） | 单元 | script 四种目标、字符串分词、数组参数、dependsOn 不存在 / 成环、名称与单行校验 |
+| `BuildFileEditorTest`（10） | 单元 | `jrun add`：KTS / Groovy、跳过嵌套块与字符串注释、原地升级、CRLF、坐标与配置名防注入 |
+| `InputsFingerprintTest`（3） | 单元 | 内容指纹的格式、顺序与构建根目录文件（插件与启动器之间的协议） |
+| `JrunVersionTest`（1） | 单元 | 版本资源与构建版本一致 |
+| `JrunPluginFunctionalTest`（25） | TestKit | 目录扁平化、启动器编码与收窄、版本占位符、argfile、任务注册、IDEA 配置、Kotlin / Groovy / Spring Boot 共存 |
+| `JrunScriptsDslFunctionalTest`（4） | TestKit | 块写法元数据、Gradle 任务依赖顺序、配置期成环报错 |
+| `JrunCliFunctionalTest`（3） | TestKit | `jrunAdd`、`jrunResolve`（本地仓库，离线稳定）、多模块映射 |
+| `JrunScriptFunctionalTest`（4） | bash | 单文件模式、参数透传、含 `=` 的固定参数 |
+| `JrunLauncherFunctionalTest`（19） | bash | 内容哈希失效（删除 / mtime 回退 / 版本目录）、JVM 参数、shebang、数组参数、`shell:`、dependsOn、`add` 回滚、`init`、全局委托、`-m` |
+| `JrunInstallerTest`（3） | bash | 用 `jrunDist` 产物跑 `install.sh`、被篡改的资产被拒绝 |
+| `JrunBatFunctionalTest`（6） | cmd | 同样的核心路径走 `jrun.bat`（`@EnabledOnOs(WINDOWS)`，CI 的 windows-latest 上运行） |
 
 ### 门禁
 
-- `./gradlew validatePlugins` —— Gradle 内置的插件元数据校验（任务标注、扩展注册等），已无警告。
-- `./gradlew build` —— 测试 + jar + 插件元数据，全绿才允许发布。
+- `./gradlew validatePlugins`：Gradle 内置的插件元数据校验，必须无警告。
+- `./gradlew build`：测试 + jar + 插件元数据 + Release 资产（`jrunDist`），全绿才允许发布。
+- CI：`test`（3 个系统 × JDK 17/21/25）、`installer`（install.sh / install.ps1 真实安装冒烟）、
+  `gradle-compat`（Gradle 8.14.3 / 9.0.0 / 9.8.2，每周一定时运行，也可手动触发）。
 
-### 测试基础设施的两个约定
+### 测试基础设施的约定
 
-1. **用 Groovy DSL 写测试项目**：KTS 每次都要编译脚本，会让每个用例多 1~2s；KTS 语法由 `kotlinDslConfigurationWorks` 单独覆盖。
-2. **脚本测试先跑 `jrunInit`**：TestKit 的临时项目没有 `gradlew`，脚本若走「缓存失效 → 调 gradle」路径会失败。先准备好 argfile，脚本就走缓存命中路径直接 `exec java`。
+1. **用 Groovy DSL 写测试项目**：KTS 每次都要编译脚本，会让每个用例多 1~2s；KTS 语法另有用例覆盖。
+2. **启动器测试先跑 `jrunInit`**：TestKit 的临时项目没有 gradlew。先准备好缓存，再放一个只记录参数的
+   假 gradlew，用来断言启动器有没有、怎样调用 Gradle。
 
 ---
 
@@ -65,7 +47,6 @@
 | 测试 | 为什么重要 | 实现要点 |
 | --- | --- | --- |
 | **Gradle 8.14.3 兼容性** | 已手工验证可用，但没有自动化守护；插件若误用新 API 会静默 break | `runner.withGradleVersion("8.14.3")`，用 `@Tag("compat")` 隔离，CI 单独跑（首次要下载分发包） |
-| **`.bat` 端到端** | Windows 用户的主要入口；此前修过 `%1` 解析期 `=` 被拆、`findstr /q` 不可用等问题，都靠手工发现 | 用 `cmd /c jrun.bat Hello.java`；只在 Windows runner 上跑 |
 | **路径含空格** | Windows 用户目录常带空格（`C:\Users\John Doe\...`），是 classpath 引号处理的高危点 | `@TempDir` 再嵌一层带空格的子目录 |
 
 ### P1 — 提高信心
@@ -109,7 +90,7 @@
 ./gradlew publishToMavenLocal    # 确认 POM/模块元数据可发布
 ```
 
-- [ ] 15 个测试全绿
+- [ ] 全部测试通过（Windows 专属用例以 CI 结果为准）
 - [ ] `validatePlugins` 无警告
 - [ ] `publishToMavenLocal` 产物包含 `.jar` / `.pom` / `.module` / plugin marker
 
@@ -123,7 +104,7 @@ pluginManagement { repositories { mavenLocal(); gradlePluginPortal() } }
 ```
 ```kotlin
 // build.gradle.kts
-plugins { id("com.archforge.jrun") version "0.1.0" }
+plugins { id("com.archforge.jrun") version "0.2.0" }
 ```
 
 - [ ] `./jrun init` 正常
@@ -152,7 +133,7 @@ gradle.publish.secret=yyyyyyyy
 
 首次发布会处理 namespace 归属。发布后几分钟内可在
 <https://plugins.gradle.org/plugin/com.archforge.jrun> 看到，并可通过
-`plugins { id("com.archforge.jrun") version "0.1.0" }` 直接解析。
+`plugins { id("com.archforge.jrun") version "0.2.0" }` 直接解析。
 
 ### 6. 发布后验证
 
@@ -176,3 +157,21 @@ gradle.publish.secret=yyyyyyyy
 **兼容性承诺**（建议写进 README）：
 - 插件运行在 Gradle 8.14+ / JDK 17+
 - 生成物（`jrun`、`jrun.bat`、`.run/*.run.xml`）属于实现细节，但文件名与命令行用法保持稳定
+
+---
+
+## 五、发布 GitHub Release（一键安装依赖它）
+
+README 里的一键安装命令从 `releases/latest/download/` 下载资产，所以每个版本都要发 Release：
+
+```bash
+# 1. 改 build.gradle.kts 里的 version，提交并 push
+# 2. 打标签并推送：release 工作流会校验标签与 version 一致，然后构建、测试、打包、发布
+git tag v0.2.0
+git push origin v0.2.0
+# 3. 核对资产（9 个）
+gh release view v0.2.0
+```
+
+资产：`jrun`、`jrun.bat`、`install.sh`、`install.ps1`、`gradlew`、`gradlew.bat`、`gradle-wrapper.jar`、
+`gradle-wrapper.properties`、`SHA256SUMS`。本地预览：`./gradlew jrunDist && (cd build/dist && sha256sum -c SHA256SUMS)`。
