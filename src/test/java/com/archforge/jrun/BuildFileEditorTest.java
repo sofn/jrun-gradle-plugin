@@ -28,9 +28,9 @@ class BuildFileEditorTest {
 
                 dependencies {
                   implementation("org.slf4j:slf4j-api:2.0.17")
-                  implementation("com.google.code.gson:gson:2.11")
+                  implementation("com.google.code.gson:gson:2.11.0")
                 }
-                """, kts(script, "com.google.code.gson:gson:2.11"));
+                """, kts(script, "com.google.code.gson:gson:2.11.0"));
     }
 
     @Test
@@ -43,8 +43,8 @@ class BuildFileEditorTest {
     @Test
     void createsTheBlockWhenMissing() {
         assertEquals("plugins { id(\"com.archforge.jrun\") }\n\ndependencies {\n"
-                        + "    implementation(\"com.google.code.gson:gson:2.11\")\n}\n",
-                kts("plugins { id(\"com.archforge.jrun\") }\n", "com.google.code.gson:gson:2.11"));
+                        + "    implementation(\"com.google.code.gson:gson:2.11.0\")\n}\n",
+                kts("plugins { id(\"com.archforge.jrun\") }\n", "com.google.code.gson:gson:2.11.0"));
     }
 
     @Test
@@ -82,8 +82,8 @@ class BuildFileEditorTest {
 
     @Test
     void upgradesAnExistingCoordinateInPlace() {
-        assertEquals("dependencies {\n    api(\"com.google.code.gson:gson:2.11\")\n}\n",
-                kts("dependencies {\n    api(\"com.google.code.gson:gson:2.10\")\n}\n", "com.google.code.gson:gson:2.11"));
+        assertEquals("dependencies {\n    api(\"com.google.code.gson:gson:2.11.0\")\n}\n",
+                kts("dependencies {\n    api(\"com.google.code.gson:gson:2.10\")\n}\n", "com.google.code.gson:gson:2.11.0"));
     }
 
     @Test

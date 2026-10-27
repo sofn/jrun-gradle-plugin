@@ -23,7 +23,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://github.com/sofn/jrun-gradle-p
 
 ```bash
 jrun init my-app && cd my-app && ./jrun          # Hello from jrun
-./jrun add com.google.code.gson:gson:2.11        # edits build.gradle.kts, resolves, rolls back on failure
+./jrun add com.google.code.gson:gson:2.11.0        # edits build.gradle.kts, resolves, rolls back on failure
 ```
 
 > The plugin is not on the Gradle Plugin Portal yet. Until it is, `jrun init` and the snippet above need the

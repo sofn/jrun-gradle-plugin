@@ -171,7 +171,7 @@ EOF
   chmod +x "$target/jrun"
   echo "已创建 jrun 项目: $target"
   echo "  cd $(basename -- "$target") && ./jrun                 # 运行 main/Main.java"
-  echo "  ./jrun add com.google.code.gson:gson:2.11     # 添加依赖"
+  echo "  ./jrun add com.google.code.gson:gson:2.11.0     # 添加依赖"
   if [[ ! -f "$target/gradlew" ]]; then
     echo "提示: 没有 Gradle wrapper 模板（用一键安装脚本安装 jrun 时会一并装好），首次运行需要本机已安装 Gradle" >&2
   fi

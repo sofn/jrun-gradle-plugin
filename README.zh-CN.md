@@ -23,7 +23,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://github.com/sofn/jrun-gradle-p
 
 ```bash
 jrun init my-app && cd my-app && ./jrun          # Hello from jrun
-./jrun add com.google.code.gson:gson:2.11        # 改写 build.gradle.kts、解析校验，失败自动回滚
+./jrun add com.google.code.gson:gson:2.11.0        # 改写 build.gradle.kts、解析校验，失败自动回滚
 ```
 
 > 插件还没有发布到 Gradle Plugin Portal。在那之前，`jrun init` 生成的项目和上面的一行接入都需要

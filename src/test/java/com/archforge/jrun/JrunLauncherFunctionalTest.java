@@ -232,10 +232,10 @@ class JrunLauncherFunctionalTest extends AbstractJrunTest {
         helloProject("");
         fakeGradlew("case \"$*\" in *jrunAdd*) echo '// edited' >> \"$(dirname \"$0\")/build.gradle\" ;; esac\nexit 0\n");
 
-        ProcessResult r = jrun("add", "--test", "com.google.code.gson:gson:2.11");
+        ProcessResult r = jrun("add", "--test", "com.google.code.gson:gson:2.11.0");
         assertEquals(0, r.exitCode(), r.output());
         assertTrue(gradleCalls().contains(
-                "jrunAdd --configuration=testImplementation --dependency=com.google.code.gson:gson:2.11"), gradleCalls());
+                "jrunAdd --configuration=testImplementation --dependency=com.google.code.gson:gson:2.11.0"), gradleCalls());
         assertTrue(gradleCalls().contains("jrunResolve --configuration=testImplementation jrunInit"), gradleCalls());
         assertTrue(read("build.gradle").contains("// edited"), "a successful add keeps the edit");
     }

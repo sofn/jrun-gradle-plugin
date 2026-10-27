@@ -26,11 +26,11 @@ class JrunCliFunctionalTest extends AbstractJrunTest {
         write("settings.gradle.kts", "rootProject.name = \"add\"\n");
         write("build.gradle.kts", "plugins { id(\"com.archforge.jrun\") }\n\ndependencies {\n}\n");
 
-        runner("jrunAdd", "--dependency=com.google.code.gson:gson:2.11",
+        runner("jrunAdd", "--dependency=com.google.code.gson:gson:2.11.0",
                 "--dependency=org.slf4j:slf4j-api:2.0.17").build();
 
         assertEquals("plugins { id(\"com.archforge.jrun\") }\n\ndependencies {\n"
-                + "    implementation(\"com.google.code.gson:gson:2.11\")\n"
+                + "    implementation(\"com.google.code.gson:gson:2.11.0\")\n"
                 + "    implementation(\"org.slf4j:slf4j-api:2.0.17\")\n}\n", read("build.gradle.kts"));
     }
 
